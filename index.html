@@ -19,7 +19,7 @@
             storageBucket: "projeto-pweb-8bf00.firebasestorage.app",
             messagingSenderId: "547034401386",
             appId: "1:547034401386:web:c1f86c7782495e9ae31813",
-            measurementId: "G-E8S9Q89K24" // Adicionado para match total com o seu console
+            measurementId: "G-E8S9Q89K24" 
         };
         
         const app = initializeApp(firebaseConfig);
@@ -35,13 +35,18 @@
         const appScreen = document.getElementById('app-screen');
         const userEmailSpan = document.getElementById('user-email');
 
-        // Função de Login
+        // Função de Login atualizada com logs detalhados
         window.loginGoogle = async () => {
             try { 
                 await signInWithPopup(auth, provider); 
             } catch (e) { 
-                console.error(e);
-                alert("Erro ao entrar com o Google. Verifique se adicionou o domínio do GitHub no Console do Firebase."); 
+                console.error("Erro detalhado do Firebase:", e);
+                // Caso o erro seja de domínio não autorizado, avisamos especificamente
+                if (e.code === 'auth/unauthorized-domain') {
+                    alert("Domínio não autorizado! Adicione '" + window.location.hostname + "' na lista de domínios autorizados no Console do Firebase.");
+                } else {
+                    alert("Erro ao entrar com o Google. Verifique o console do navegador para mais detalhes."); 
+                }
             }
         };
 
@@ -208,7 +213,7 @@
         </div>
         
         <footer class="mt-8 text-center text-stone-400 text-xs italic">
-            Configuração completa com Measurement ID ativa.
+            Configuração completa com domínio protegido.
         </footer>
     </div>
 

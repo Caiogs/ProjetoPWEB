@@ -10,7 +10,7 @@
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // Configuração do Firebase (Certifique-se de que estas chaves estão no seu Firebase Console)
+        // Configuração do Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyBI1P-cNo6UHmM2jluVicuV2GaTk3XPy7U",
             authDomain: "projeto-pweb-8bf00.firebaseapp.com",
@@ -73,7 +73,6 @@
 
         function initDataListener() {
             if (!userId) return;
-            // IMPORTANTE: Mudamos para um caminho privado para maior segurança (artifacts/{id}/users/{uid})
             const q = query(collection(db, 'artifacts', firebaseConfig.projectId, 'users', userId, 'registros_horario'));
             onSnapshot(q, snap => {
                 allEntries = [];
@@ -91,7 +90,6 @@
             if (!userId) return;
             const mE1 = tToM(e1), mS1 = tToM(s1), mE2 = tToM(e2), mS2 = tToM(s2);
             
-            // Cálculo de intervalos (considerando que saída deve ser após entrada)
             const totalMin = (mS1 > mE1 ? mS1 - mE1 : 0) + (mS2 > mE2 ? mS2 - mE2 : 0);
             const normalMin = Math.min(totalMin, JORNADA_DIARIA_MINUTOS);
             const extraMin = Math.max(0, totalMin - JORNADA_DIARIA_MINUTOS);
@@ -133,12 +131,18 @@
             
             let totalNormalMin = 0;
             let totalExtraMin = 0;
-            let ganhoTotal = 0;
+            let totalGanhoGeral = 0;
 
             filtered.sort((a,b) => b.date.localeCompare(a.date)).forEach(d => {
-                totalNormalMin += (d.normalMinutes || 0);
-                totalExtraMin += (d.extraMinutes || 0);
-                ganhoTotal += (d.ganhoDiario || 0);
+                // Recalcular minutos para garantir que o dashboard nunca fique zerado por erro de cache de dados
+                const mE1 = tToM(d.entrada1), mS1 = tToM(d.saida1), mE2 = tToM(d.entrada2), mS2 = tToM(d.saida2);
+                const totalMinDia = (mS1 > mE1 ? mS1 - mE1 : 0) + (mS2 > mE2 ? mS2 - mE2 : 0);
+                const normalMinDia = Math.min(totalMinDia, JORNADA_DIARIA_MINUTOS);
+                const extraMinDia = Math.max(0, totalMinDia - JORNADA_DIARIA_MINUTOS);
+                
+                totalNormalMin += normalMinDia;
+                totalExtraMin += extraMinDia;
+                totalGanhoGeral += (d.ganhoDiario || 0);
 
                 const tr = document.createElement('tr');
                 tr.className = "border-b hover:bg-stone-50 group";
@@ -148,8 +152,8 @@
                     <td class="p-4 text-center"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
                     <td class="p-4 text-center"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
                     <td class="p-4 text-center"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
-                    <td class="p-4 text-center font-bold text-stone-500">${mToT(d.totalMinutes || 0)}</td>
-                    <td class="p-4 text-center font-bold text-amber-600">${mToT(d.extraMinutes || 0)}</td>
+                    <td class="p-4 text-center font-bold text-stone-500">${mToT(totalMinDia)}</td>
+                    <td class="p-4 text-center font-bold text-amber-600">${mToT(extraMinDia)}</td>
                     <td class="p-4 text-right font-bold text-green-700">${formatBRL(d.ganhoDiario)}</td>
                     <td class="p-4 text-center">
                         <button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-600 transition-all font-bold">✕</button>
@@ -158,10 +162,11 @@
                 tbody.appendChild(tr);
             });
 
+            // Atualização dos Cards Superiores
             document.getElementById('total-horas-normais').textContent = mToT(totalNormalMin);
             document.getElementById('total-horas-extras').textContent = mToT(totalExtraMin);
             document.getElementById('salario-base').textContent = formatBRL((totalNormalMin / 60) * VALOR_HORA_NORMAL);
-            document.getElementById('salario-final').textContent = formatBRL(ganhoTotal);
+            document.getElementById('salario-final').textContent = formatBRL(totalGanhoGeral);
         }
 
         window.addNewRow = () => {

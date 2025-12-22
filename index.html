@@ -10,6 +10,7 @@
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
+        // Configuração do Firebase (Certifique-se de que estas chaves estão no seu Firebase Console)
         const firebaseConfig = {
             apiKey: "AIzaSyBI1P-cNo6UHmM2jluVicuV2GaTk3XPy7U",
             authDomain: "projeto-pweb-8bf00.firebaseapp.com",
@@ -41,10 +42,15 @@
             }).format(valor || 0);
         };
 
-        const tToM = (t) => t ? t.split(':').reduce((h, m) => h * 60 + +m) : 0;
+        const tToM = (t) => {
+            if (!t || !t.includes(':')) return 0;
+            const [h, m] = t.split(':');
+            return parseInt(h) * 60 + parseInt(m);
+        };
+
         const mToT = (m) => {
-            const h = Math.floor(m / 60);
-            const min = m % 60;
+            const h = Math.floor(Math.abs(m) / 60);
+            const min = Math.floor(Math.abs(m) % 60);
             return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
         };
 
@@ -56,32 +62,36 @@
                 document.getElementById('app-screen').classList.remove('hidden');
                 initDataListener();
             } else {
+                userId = null;
                 document.getElementById('login-screen').classList.remove('hidden');
                 document.getElementById('app-screen').classList.add('hidden');
             }
         });
 
-        window.loginGoogle = () => signInWithPopup(auth, provider);
+        window.loginGoogle = () => signInWithPopup(auth, provider).catch(err => console.error("Erro Login:", err));
         window.logout = () => signOut(auth);
 
         function initDataListener() {
-            const q = query(collection(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario'));
+            if (!userId) return;
+            // IMPORTANTE: Mudamos para um caminho privado para maior segurança (artifacts/{id}/users/{uid})
+            const q = query(collection(db, 'artifacts', firebaseConfig.projectId, 'users', userId, 'registros_horario'));
             onSnapshot(q, snap => {
                 allEntries = [];
-                snap.forEach(d => {
-                    const data = d.data();
-                    if (data.ownerId === userId) allEntries.push({ ...data, id: d.id });
-                });
+                snap.forEach(d => allEntries.push({ ...d.data(), id: d.id }));
+                
                 if (!currentMonthKey) {
                     const n = new Date();
                     currentMonthKey = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
                 }
                 renderApp();
-            });
+            }, err => console.error("Erro de Permissão:", err));
         }
 
         async function saveEntry(date, e1, s1, e2, s2) {
+            if (!userId) return;
             const mE1 = tToM(e1), mS1 = tToM(s1), mE2 = tToM(e2), mS2 = tToM(s2);
+            
+            // Cálculo de intervalos (considerando que saída deve ser após entrada)
             const totalMin = (mS1 > mE1 ? mS1 - mE1 : 0) + (mS2 > mE2 ? mS2 - mE2 : 0);
             const normalMin = Math.min(totalMin, JORNADA_DIARIA_MINUTOS);
             const extraMin = Math.max(0, totalMin - JORNADA_DIARIA_MINUTOS);
@@ -89,14 +99,17 @@
             const ganhoNormal = (normalMin / 60) * VALOR_HORA_NORMAL;
             const ganhoExtra = (extraMin / 60) * VALOR_HORA_EXTRA;
 
-            const docId = `${userId}_${date.replace(/-/g, '_')}`;
-            await setDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario', docId), {
-                ownerId: userId,
-                date, entrada1: e1, saida1: s1, entrada2: e2, saida2: s2,
-                totalMinutes: totalMin, extraMinutes: extraMin, normalMinutes: normalMin,
-                ganhoDiario: ganhoNormal + ganhoExtra,
-                updatedAt: Timestamp.now()
-            }, { merge: true });
+            const docId = date.replace(/-/g, '_');
+            try {
+                await setDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'users', userId, 'registros_horario', docId), {
+                    date, entrada1: e1, saida1: s1, entrada2: e2, saida2: s2,
+                    totalMinutes: totalMin, extraMinutes: extraMin, normalMinutes: normalMin,
+                    ganhoDiario: ganhoNormal + ganhoExtra,
+                    updatedAt: Timestamp.now()
+                }, { merge: true });
+            } catch (err) {
+                console.error("Erro ao salvar:", err);
+            }
         }
 
         window.handleInput = (e) => {
@@ -108,12 +121,14 @@
         };
 
         window.deletarRegistro = async (id) => {
-            if(confirm("Excluir registro?")) await deleteDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario', id));
+            if(confirm("Deseja excluir este registro?")) {
+                await deleteDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'users', userId, 'registros_horario', id));
+            }
         };
 
         function renderApp() {
             const tbody = document.getElementById('table-body');
-            const filtered = allEntries.filter(e => e.date.substring(0, 7) === currentMonthKey);
+            const filtered = allEntries.filter(e => e.date && e.date.substring(0, 7) === currentMonthKey);
             tbody.innerHTML = '';
             
             let totalNormalMin = 0;
@@ -128,35 +143,30 @@
                 const tr = document.createElement('tr');
                 tr.className = "border-b hover:bg-stone-50 group";
                 tr.innerHTML = `
-                    <td class="p-3"><input type="date" name="date" value="${d.date}" onchange="window.handleInput(event)" class="bg-transparent outline-none"></td>
-                    <td class="p-3 text-center"><input type="time" name="e1" value="${d.entrada1||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded"></td>
-                    <td class="p-3 text-center"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded"></td>
-                    <td class="p-3 text-center"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded"></td>
-                    <td class="p-3 text-center"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded"></td>
-                    <td class="p-3 text-center font-bold text-stone-500">${mToT(d.normalMinutes || 0)}</td>
-                    <td class="p-3 text-center font-bold text-amber-600">${mToT(d.extraMinutes || 0)}</td>
-                    <td class="p-3 text-right font-bold text-green-700">${formatBRL(d.ganhoDiario)}</td>
-                    <td class="p-3 text-center">
-                        <button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-600 transition-all">✕</button>
+                    <td class="p-4"><input type="date" name="date" value="${d.date}" onchange="window.handleInput(event)" class="bg-transparent outline-none"></td>
+                    <td class="p-4 text-center"><input type="time" name="e1" value="${d.entrada1||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
+                    <td class="p-4 text-center"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
+                    <td class="p-4 text-center"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
+                    <td class="p-4 text-center"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
+                    <td class="p-4 text-center font-bold text-stone-500">${mToT(d.totalMinutes || 0)}</td>
+                    <td class="p-4 text-center font-bold text-amber-600">${mToT(d.extraMinutes || 0)}</td>
+                    <td class="p-4 text-right font-bold text-green-700">${formatBRL(d.ganhoDiario)}</td>
+                    <td class="p-4 text-center">
+                        <button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-600 transition-all font-bold">✕</button>
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
 
-            // Dashboards superiores
             document.getElementById('total-horas-normais').textContent = mToT(totalNormalMin);
             document.getElementById('total-horas-extras').textContent = mToT(totalExtraMin);
-            
-            const valorBase = (totalNormalMin / 60) * VALOR_HORA_NORMAL;
-            const valorExtra = (totalExtraMin / 60) * VALOR_HORA_EXTRA;
-            
-            document.getElementById('salario-base').textContent = formatBRL(valorBase);
+            document.getElementById('salario-base').textContent = formatBRL((totalNormalMin / 60) * VALOR_HORA_NORMAL);
             document.getElementById('salario-final').textContent = formatBRL(ganhoTotal);
         }
 
         window.addNewRow = () => {
             const today = new Date().toISOString().split('T')[0];
-            saveEntry(today, '', '', '', '');
+            saveEntry(today, '08:00', '12:00', '13:00', '17:00');
         };
     </script>
 </head>
@@ -166,7 +176,7 @@
         <div class="bg-white p-10 rounded-[2.5rem] shadow-xl text-center max-w-sm w-full border border-stone-200">
             <h1 class="text-3xl font-black mb-2 tracking-tighter">Ponto BRL</h1>
             <p class="text-stone-400 text-sm mb-8 font-medium">Controle salarial em Tempo Real</p>
-            <button onclick="window.loginGoogle()" class="flex items-center justify-center gap-3 w-full py-4 bg-stone-900 text-white rounded-2xl hover:bg-stone-800 transition-all font-bold">
+            <button onclick="window.loginGoogle()" class="flex items-center justify-center gap-3 w-full py-4 bg-stone-900 text-white rounded-2xl hover:bg-stone-800 transition-all font-bold shadow-lg">
                 Entrar com Google
             </button>
         </div>
@@ -175,24 +185,24 @@
     <div id="app-screen" class="hidden max-w-6xl mx-auto py-10 px-6">
         <header class="flex justify-between items-center mb-8">
             <h1 id="user-email" class="font-black text-xl tracking-tight text-stone-900">...</h1>
-            <button onclick="window.logout()" class="text-xs font-bold bg-stone-200 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors">Sair</button>
+            <button onclick="window.logout()" class="text-xs font-bold bg-stone-200 px-4 py-2 rounded-xl hover:bg-red-100 transition-colors">Sair</button>
         </header>
 
         <!-- DASHBOARD SALARIAL -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-            <div class="bg-white p-5 rounded-3xl border border-stone-200">
-                <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Horas Normais</p>
+            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
+                <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Horas Mensais</p>
                 <p id="total-horas-normais" class="text-2xl font-black text-stone-700">00:00</p>
             </div>
-            <div class="bg-white p-5 rounded-3xl border border-stone-200">
+            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
                 <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Horas Extras</p>
                 <p id="total-horas-extras" class="text-2xl font-black text-amber-600">00:00</p>
             </div>
-            <div class="bg-white p-5 rounded-3xl border border-stone-200">
+            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
                 <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Salário Base</p>
                 <p id="salario-base" class="text-2xl font-black text-stone-500">R$ 0,00</p>
             </div>
-            <div class="bg-stone-900 p-5 rounded-3xl shadow-lg border border-stone-800">
+            <div class="bg-stone-900 p-6 rounded-3xl shadow-xl border border-stone-800">
                 <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Salário Final (BRL)</p>
                 <p id="salario-final" class="text-2xl font-black text-white">R$ 0,00</p>
             </div>
@@ -200,9 +210,9 @@
 
         <!-- TABELA -->
         <div class="bg-white rounded-[2rem] border border-stone-200 overflow-hidden shadow-sm">
-            <div class="p-6 border-b flex justify-between items-center">
+            <div class="p-6 border-b flex justify-between items-center bg-stone-50/50">
                 <h2 class="font-black text-stone-800">Registros do Mês</h2>
-                <button onclick="window.addNewRow()" class="bg-green-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-green-700 transition-all shadow-md">+ Novo Dia</button>
+                <button onclick="window.addNewRow()" class="bg-green-600 text-white px-6 py-2.5 rounded-2xl text-sm font-bold hover:bg-green-700 transition-all shadow-md active:scale-95">+ Novo Dia</button>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm">
@@ -213,8 +223,8 @@
                             <th class="p-4 text-center">Saí. 1</th>
                             <th class="p-4 text-center">Ent. 2</th>
                             <th class="p-4 text-center">Saí. 2</th>
-                            <th class="p-4 text-center">Normais</th>
-                            <th class="p-4 text-center">Extras</th>
+                            <th class="p-4 text-center">Total</th>
+                            <th class="p-4 text-center text-amber-600">Extras</th>
                             <th class="p-4 text-right">Ganho Diário</th>
                             <th class="p-4"></th>
                         </tr>

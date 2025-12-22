@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meu Controle de Ponto & Salário (R$)</title>
+    <title>Controle de Ponto - Reais (R$)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // --- CONFIGURAÇÃO DO FIREBASE ---
         const firebaseConfig = {
             apiKey: "AIzaSyBI1P-cNo6UHmM2jluVicuV2GaTk3XPy7U",
             authDomain: "projeto-pweb-8bf00.firebaseapp.com",
@@ -26,7 +25,7 @@
         const db = getFirestore(app);
         const provider = new GoogleAuthProvider();
 
-        // Valores em Reais (ajustáveis)
+        // Configuração de Valores em Reais
         const VALOR_HORA_NORMAL = 11.27; 
         const VALOR_HORA_EXTRA = VALOR_HORA_NORMAL * 1.5;
 
@@ -34,26 +33,21 @@
         let allEntries = [];
         let currentMonthKey = ''; 
 
+        // Função de formatação explícita para Real Brasileiro (BRL)
+        const formatBRL = (valor) => {
+            return new Intl.NumberFormat('pt-BR', {
+                style: 'currency',
+                currency: 'BRL',
+            }).format(valor || 0);
+        };
+
         const loginScreen = document.getElementById('login-screen');
         const appScreen = document.getElementById('app-screen');
         const userEmailSpan = document.getElementById('user-email');
 
-        // Formatação para Real Brasileiro
-        const formatBRL = (val) => val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
         window.loginGoogle = async () => {
-            try { 
-                await signInWithPopup(auth, provider); 
-            } 
-            catch (e) { 
-                console.error("Erro Firebase Auth:", e);
-                if (e.code === 'auth/unauthorized-domain') {
-                    const currentDomain = window.location.hostname;
-                    alert(`ERRO DE DOMÍNIO: O domínio "${currentDomain}" não está autorizado no Firebase.\n\nComo resolver:\n1. Vá ao Console do Firebase\n2. Authentication > Configurações > Domínios Autorizados\n3. Adicione "${currentDomain}" à lista.`);
-                } else {
-                    alert("Erro ao entrar. Detalhes no console do navegador."); 
-                }
-            }
+            try { await signInWithPopup(auth, provider); } 
+            catch (e) { console.error("Erro Auth:", e); alert("Erro ao entrar. Verifique o console."); }
         };
 
         window.logout = () => signOut(auth);
@@ -88,8 +82,6 @@
                     currentMonthKey = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
                 }
                 renderApp();
-            }, (err) => {
-                console.error("Erro ao ler dados:", err);
             });
         }
 
@@ -100,34 +92,26 @@
             if (!userId) return;
             const mE1 = tToM(e1), mS1 = tToM(s1), mE2 = tToM(e2), mS2 = tToM(s2);
             const totalMin = (mS1 > mE1 ? mS1 - mE1 : 0) + (mS2 > mE2 ? mS2 - mE2 : 0);
-            const normalMin = Math.min(totalMin, 420); // 7 horas
+            const normalMin = Math.min(totalMin, 420); // 7h normais
             const extraMin = Math.max(0, totalMin - 420);
             
             const ganhoNormal = (normalMin / 60) * VALOR_HORA_NORMAL;
             const ganhoExtra = (extraMin / 60) * VALOR_HORA_EXTRA;
 
             const docId = `${userId}_${date.replace(/-/g, '_')}`;
-            try {
-                await setDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario', docId), {
-                    ownerId: userId,
-                    date, entrada1: e1, saida1: s1, entrada2: e2, saida2: s2,
-                    horasTotais: mToT(totalMin), horasExtras: mToT(extraMin),
-                    totalMinutes: totalMin, extraMinutes: extraMin,
-                    ganhoDiario: ganhoNormal + ganhoExtra,
-                    updatedAt: Timestamp.now()
-                }, { merge: true });
-            } catch (e) {
-                console.error("Erro ao guardar:", e);
-            }
+            await setDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario', docId), {
+                ownerId: userId,
+                date, entrada1: e1, saida1: s1, entrada2: e2, saida2: s2,
+                horasTotais: mToT(totalMin), horasExtras: mToT(extraMin),
+                totalMinutes: totalMin, extraMinutes: extraMin,
+                ganhoDiario: ganhoNormal + ganhoExtra,
+                updatedAt: Timestamp.now()
+            }, { merge: true });
         }
 
         window.deletarRegistro = async (docId) => {
-            if (confirm("Deseja apagar este registro?")) {
-                try {
-                    await deleteDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario', docId));
-                } catch (e) {
-                    console.error("Erro ao apagar:", e);
-                }
+            if (confirm("Apagar este registro?")) {
+                await deleteDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario', docId));
             }
         };
 
@@ -156,12 +140,10 @@
                 <td class="p-3 text-center"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
                 <td class="p-3 text-center"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
                 <td class="p-3 text-center font-bold text-stone-700 text-sm">${d.horasExtras||'00:00'}</td>
-                <td class="p-3 text-right font-bold text-green-600 text-sm">${formatBRL(d.ganhoDiario || 0)}</td>
+                <td class="p-3 text-right font-bold text-green-600 text-sm">${formatBRL(d.ganhoDiario)}</td>
                 <td class="p-3 text-center">
                     <button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </button>
                 </td>
             `;
@@ -192,10 +174,10 @@
     <div id="login-screen" class="flex items-center justify-center min-h-screen p-4">
         <div class="bg-white p-8 md:p-12 rounded-3xl shadow-2xl text-center border max-w-sm w-full">
             <h1 class="text-3xl font-black text-stone-900 mb-2">Ponto Web</h1>
-            <p class="text-stone-500 mb-8 leading-tight">Gestão de Horas e Salário em Reais.</p>
+            <p class="text-stone-500 mb-8 leading-tight">Cálculos automáticos em Reais (BRL).</p>
             <button onclick="window.loginGoogle()" class="flex items-center justify-center gap-3 w-full py-4 bg-white border-2 border-stone-200 rounded-2xl hover:bg-stone-50 transition-all font-bold shadow-sm">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google.svg" width="20">
-                Entrar com o Google
+                Entrar com Google
             </button>
         </div>
     </div>
@@ -203,7 +185,7 @@
     <div id="app-screen" class="hidden max-w-5xl mx-auto py-12 px-6">
         <header class="flex justify-between items-end mb-10">
             <div>
-                <p class="text-green-600 font-bold uppercase text-[10px] tracking-widest mb-1">Cálculo de Rendimentos (BRL)</p>
+                <p class="text-green-600 font-bold uppercase text-[10px] tracking-widest mb-1">Moeda Corrente: Real (BRL)</p>
                 <h1 class="text-3xl font-black tracking-tight" id="user-email">...</h1>
             </div>
             <button onclick="window.logout()" class="px-4 py-2 bg-stone-200 hover:bg-red-100 hover:text-red-700 rounded-xl transition-all font-bold text-xs">Sair</button>
@@ -216,30 +198,29 @@
             </div>
             <div class="bg-green-700 p-6 rounded-3xl shadow-lg text-white md:col-span-2 relative overflow-hidden">
                 <div class="relative z-10">
-                    <p class="text-green-100 text-[10px] font-bold uppercase mb-1">Previsão de Recebimento Total</p>
+                    <p class="text-green-100 text-[10px] font-bold uppercase mb-1">Total Previsto em Reais</p>
                     <p class="text-4xl font-black" id="total-cash">R$ 0,00</p>
                     <p class="text-green-200 text-xs mt-2 font-medium" id="breakdown-cash">Normal: R$ 0,00 | Extras: R$ 0,00</p>
                 </div>
-                <svg class="absolute right-0 bottom-0 opacity-10 h-24 w-24 -mr-4 -mb-4" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"></path><path fill-rule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clip-rule="evenodd"></path></svg>
             </div>
         </div>
 
         <div class="bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
             <div class="p-6 border-b flex justify-between items-center bg-stone-50/50">
                 <h2 class="font-black text-stone-700">Folha de Ponto</h2>
-                <button onclick="window.addNewRow()" class="bg-stone-900 text-white px-6 py-3 rounded-2xl text-sm font-bold hover:bg-stone-800 transition-all shadow-md">Novo Dia</button>
+                <button onclick="window.addNewRow()" class="bg-stone-900 text-white px-6 py-3 rounded-2xl text-sm font-bold hover:bg-stone-800 transition-all shadow-md">Novo Registro</button>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left">
                     <thead class="text-[10px] font-black text-stone-400 uppercase bg-white border-b">
                         <tr>
                             <th class="p-4">Data</th>
-                            <th class="p-4 text-center">E1</th>
-                            <th class="p-4 text-center">S1</th>
-                            <th class="p-4 text-center">E2</th>
-                            <th class="p-4 text-center">S2</th>
-                            <th class="p-4 text-center">H. Extra</th>
-                            <th class="p-4 text-right">Rendimento</th>
+                            <th class="p-4 text-center">Entrada 1</th>
+                            <th class="p-4 text-center">Saída 1</th>
+                            <th class="p-4 text-center">Entrada 2</th>
+                            <th class="p-4 text-center">Saída 2</th>
+                            <th class="p-4 text-center">Horas Extra</th>
+                            <th class="p-4 text-right">Rendimento (R$)</th>
                             <th class="p-4 w-10"></th>
                         </tr>
                     </thead>

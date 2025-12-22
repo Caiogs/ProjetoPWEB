@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-PT">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meu Controlo de Ponto & Salário</title>
+    <title>Meu Controle de Ponto & Salário (R$)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -26,7 +26,8 @@
         const db = getFirestore(app);
         const provider = new GoogleAuthProvider();
 
-        const VALOR_HORA_NORMAL = 11.27;
+        // Valores em Reais (ajustáveis)
+        const VALOR_HORA_NORMAL = 11.27; 
         const VALOR_HORA_EXTRA = VALOR_HORA_NORMAL * 1.5;
 
         let userId = null;
@@ -37,7 +38,9 @@
         const appScreen = document.getElementById('app-screen');
         const userEmailSpan = document.getElementById('user-email');
 
-        // Função de Login com tratamento de erro de domínio
+        // Formatação para Real Brasileiro
+        const formatBRL = (val) => val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
         window.loginGoogle = async () => {
             try { 
                 await signInWithPopup(auth, provider); 
@@ -46,7 +49,7 @@
                 console.error("Erro Firebase Auth:", e);
                 if (e.code === 'auth/unauthorized-domain') {
                     const currentDomain = window.location.hostname;
-                    alert(`ERRO DE DOMÍNIO: O domínio "${currentDomain}" não está autorizado no Firebase.\n\nComo resolver:\n1. Vá ao Console do Firebase\n2. Authentication > Settings > Authorized Domains\n3. Adicione "${currentDomain}" à lista.`);
+                    alert(`ERRO DE DOMÍNIO: O domínio "${currentDomain}" não está autorizado no Firebase.\n\nComo resolver:\n1. Vá ao Console do Firebase\n2. Authentication > Configurações > Domínios Autorizados\n3. Adicione "${currentDomain}" à lista.`);
                 } else {
                     alert("Erro ao entrar. Detalhes no console do navegador."); 
                 }
@@ -119,7 +122,7 @@
         }
 
         window.deletarRegistro = async (docId) => {
-            if (confirm("Deseja apagar este registo?")) {
+            if (confirm("Deseja apagar este registro?")) {
                 try {
                     await deleteDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario', docId));
                 } catch (e) {
@@ -148,12 +151,12 @@
             tr.className = "border-b hover:bg-stone-50 transition-colors group";
             tr.innerHTML = `
                 <td class="p-3"><input type="date" name="date" value="${d.date}" onchange="window.handleInput(event)" class="bg-transparent outline-none text-sm"></td>
-                <td class="p-3"><input type="time" name="e1" value="${d.entrada1||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
-                <td class="p-3"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
-                <td class="p-3"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
-                <td class="p-3"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
+                <td class="p-3 text-center"><input type="time" name="e1" value="${d.entrada1||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
+                <td class="p-3 text-center"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
+                <td class="p-3 text-center"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
+                <td class="p-3 text-center"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
                 <td class="p-3 text-center font-bold text-stone-700 text-sm">${d.horasExtras||'00:00'}</td>
-                <td class="p-3 text-right font-bold text-green-600 text-sm">€${(d.ganhoDiario || 0).toFixed(2)}</td>
+                <td class="p-3 text-right font-bold text-green-600 text-sm">${formatBRL(d.ganhoDiario || 0)}</td>
                 <td class="p-3 text-center">
                     <button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -179,8 +182,8 @@
             let valorExtra = (extraM / 60) * VALOR_HORA_EXTRA;
 
             document.getElementById('extra-month').textContent = mToT(extraM);
-            document.getElementById('total-cash').textContent = `€${ganhoTotal.toFixed(2)}`;
-            document.getElementById('breakdown-cash').textContent = `Normal: €${valorNormal.toFixed(2)} | Extras: €${valorExtra.toFixed(2)}`;
+            document.getElementById('total-cash').textContent = formatBRL(ganhoTotal);
+            document.getElementById('breakdown-cash').textContent = `Normal: ${formatBRL(valorNormal)} | Extras: ${formatBRL(valorExtra)}`;
         }
     </script>
 </head>
@@ -189,7 +192,7 @@
     <div id="login-screen" class="flex items-center justify-center min-h-screen p-4">
         <div class="bg-white p-8 md:p-12 rounded-3xl shadow-2xl text-center border max-w-sm w-full">
             <h1 class="text-3xl font-black text-stone-900 mb-2">Ponto Web</h1>
-            <p class="text-stone-500 mb-8 leading-tight">Gestão de Horas e Salário.</p>
+            <p class="text-stone-500 mb-8 leading-tight">Gestão de Horas e Salário em Reais.</p>
             <button onclick="window.loginGoogle()" class="flex items-center justify-center gap-3 w-full py-4 bg-white border-2 border-stone-200 rounded-2xl hover:bg-stone-50 transition-all font-bold shadow-sm">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google.svg" width="20">
                 Entrar com o Google
@@ -200,7 +203,7 @@
     <div id="app-screen" class="hidden max-w-5xl mx-auto py-12 px-6">
         <header class="flex justify-between items-end mb-10">
             <div>
-                <p class="text-green-600 font-bold uppercase text-xs tracking-widest mb-1">Cálculo de Rendimentos</p>
+                <p class="text-green-600 font-bold uppercase text-[10px] tracking-widest mb-1">Cálculo de Rendimentos (BRL)</p>
                 <h1 class="text-3xl font-black tracking-tight" id="user-email">...</h1>
             </div>
             <button onclick="window.logout()" class="px-4 py-2 bg-stone-200 hover:bg-red-100 hover:text-red-700 rounded-xl transition-all font-bold text-xs">Sair</button>
@@ -211,11 +214,11 @@
                 <p class="text-stone-400 text-[10px] font-bold uppercase mb-1">Extras Acumuladas</p>
                 <p class="text-3xl font-black text-amber-600" id="extra-month">00:00</p>
             </div>
-            <div class="bg-green-600 p-6 rounded-3xl shadow-lg text-white md:col-span-2 relative overflow-hidden">
+            <div class="bg-green-700 p-6 rounded-3xl shadow-lg text-white md:col-span-2 relative overflow-hidden">
                 <div class="relative z-10">
                     <p class="text-green-100 text-[10px] font-bold uppercase mb-1">Previsão de Recebimento Total</p>
-                    <p class="text-4xl font-black" id="total-cash">€0.00</p>
-                    <p class="text-green-200 text-xs mt-2 font-medium" id="breakdown-cash">Normal: €0.00 | Extras: €0.00</p>
+                    <p class="text-4xl font-black" id="total-cash">R$ 0,00</p>
+                    <p class="text-green-200 text-xs mt-2 font-medium" id="breakdown-cash">Normal: R$ 0,00 | Extras: R$ 0,00</p>
                 </div>
                 <svg class="absolute right-0 bottom-0 opacity-10 h-24 w-24 -mr-4 -mb-4" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"></path><path fill-rule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clip-rule="evenodd"></path></svg>
             </div>
@@ -235,7 +238,7 @@
                             <th class="p-4 text-center">S1</th>
                             <th class="p-4 text-center">E2</th>
                             <th class="p-4 text-center">S2</th>
-                            <th class="p-4 text-center">Horas Extra</th>
+                            <th class="p-4 text-center">H. Extra</th>
                             <th class="p-4 text-right">Rendimento</th>
                             <th class="p-4 w-10"></th>
                         </tr>

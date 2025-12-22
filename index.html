@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meu Controlo de Ponto</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- CONFIGURAÇÃO ATUALIZADA COM MEASUREMENT ID ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBI1P-cNo6UHmM2jluVicuV2GaTk3XPy7U",
+            authDomain: "projeto-pweb-8bf00.firebaseapp.com",
+            projectId: "projeto-pweb-8bf00",
+            storageBucket: "projeto-pweb-8bf00.firebasestorage.app",
+            messagingSenderId: "547034401386",
+            appId: "1:547034401386:web:c1f86c7782495e9ae31813",
+            measurementId: "G-E8S9Q89K24" // Adicionado para match total com o seu console
+        };
+        
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const provider = new GoogleAuthProvider();
+
+        let userId = null;
+        let allEntries = [];
+        let currentMonthKey = ''; 
+
+        const loginScreen = document.getElementById('login-screen');
+        const appScreen = document.getElementById('app-screen');
+        const userEmailSpan = document.getElementById('user-email');
+
+        // Função de Login
+        window.loginGoogle = async () => {
+            try { 
+                await signInWithPopup(auth, provider); 
+            } catch (e) { 
+                console.error(e);
+                alert("Erro ao entrar com o Google. Verifique se adicionou o domínio do GitHub no Console do Firebase."); 
+            }
+        };
+
+        // Função de Sair
+        window.logout = () => signOut(auth);
+
+        // Observador de Autenticação
+        onAuthStateChanged(auth, user => {
+            if (user) {
+                userId = user.uid;
+                userEmailSpan.textContent = user.email;
+                loginScreen.classList.add('hidden');
+                appScreen.classList.remove('hidden');
+                initDataListener();
+            } else {
+                loginScreen.classList.remove('hidden');
+                appScreen.classList.add('hidden');
+            }
+        });
+
+        // Escuta os dados do Firestore em tempo real
+        function initDataListener() {
+            const q = query(collection(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario'));
+            
+            onSnapshot(q, snap => {
+                allEntries = [];
+                snap.forEach(d => {
+                    const data = d.data();
+                    if (data.ownerId === userId) {
+                        allEntries.push(data);
+                    }
+                });
+                
+                if (!currentMonthKey) {
+                    const n = new Date();
+                    currentMonthKey = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
+                }
+                renderApp();
+            }, (err) => console.error("Erro Firestore:", err));
+        }
+
+        const tToM = (t) => t ? t.split(':').reduce((h, m) => h * 60 + +m) : 0;
+        const mToT = (m) => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+
+        async function saveEntry(date, e1, s1, e2, s2) {
+            if (!userId) return;
+            const mE1 = tToM(e1), mS1 = tToM(s1), mE2 = tToM(e2), mS2 = tToM(s2);
+            const totalMin = (mS1 > mE1 ? mS1 - mE1 : 0) + (mS2 > mE2 ? mS2 - mE2 : 0);
+            const extraMin = totalMin > 420 ? totalMin - 420 : 0; 
+            
+            const docId = `${userId}_${date.replace(/-/g, '_')}`;
+            await setDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'public', 'data', 'registros_horario', docId), {
+                ownerId: userId,
+                date, entrada1: e1, saida1: s1, entrada2: e2, saida2: s2,
+                horasTotais: mToT(totalMin), horasExtras: mToT(extraMin),
+                totalMinutes: totalMin, extraMinutes: extraMin,
+                updatedAt: Timestamp.now()
+            }, { merge: true });
+        }
+
+        window.handleInput = (e) => {
+            const row = e.target.closest('tr');
+            const d = row.querySelector('[name=date]').value;
+            const e1 = row.querySelector('[name=e1]').value, s1 = row.querySelector('[name=s1]').value;
+            const e2 = row.querySelector('[name=e2]').value, s2 = row.querySelector('[name=s2]').value;
+            if(d) saveEntry(d, e1, s1, e2, s2);
+        };
+
+        window.addNewRow = () => {
+            const tbody = document.getElementById('table-body');
+            const today = new Date().toISOString().split('T')[0];
+            const tr = createRow({ date: today, entrada1: '', saida1: '', entrada2: '', saida2: '', horasTotais: '00:00', horasExtras: '00:00' });
+            tbody.prepend(tr);
+        };
+
+        function createRow(d) {
+            const tr = document.createElement('tr');
+            tr.className = "border-b hover:bg-stone-50 transition-colors";
+            tr.innerHTML = `
+                <td class="p-3"><input type="date" name="date" value="${d.date}" onchange="window.handleInput(event)" class="bg-transparent outline-none font-medium text-sm"></td>
+                <td class="p-3"><input type="time" name="e1" value="${d.entrada1||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
+                <td class="p-3"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
+                <td class="p-3"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
+                <td class="p-3"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-20 text-center outline-none bg-stone-100 rounded text-sm"></td>
+                <td class="p-3 text-center font-bold text-stone-700 text-sm">${d.horasTotais||'00:00'}</td>
+                <td class="p-3 text-center font-bold text-amber-600 text-sm">${d.horasExtras||'00:00'}</td>
+            `;
+            return tr;
+        }
+
+        function renderApp() {
+            const tbody = document.getElementById('table-body');
+            const filtered = allEntries.filter(e => e.date.substring(0, 7) === currentMonthKey);
+            tbody.innerHTML = '';
+            filtered.sort((a,b) => b.date.localeCompare(a.date)).forEach(d => tbody.appendChild(createRow(d)));
+            
+            let totalM = filtered.reduce((acc, curr) => acc + (curr.totalMinutes || 0), 0);
+            let extraM = filtered.reduce((acc, curr) => acc + (curr.extraMinutes || 0), 0);
+            document.getElementById('total-month').textContent = mToT(totalM);
+            document.getElementById('extra-month').textContent = mToT(extraM);
+        }
+    </script>
+</head>
+<body class="bg-stone-50 text-stone-800 font-sans min-h-screen">
+    
+    <div id="login-screen" class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white p-8 md:p-12 rounded-3xl shadow-2xl text-center border max-w-sm w-full">
+            <div class="mb-6 inline-flex p-4 bg-amber-100 rounded-full">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            </div>
+            <h1 class="text-3xl font-black text-stone-900 mb-2">Ponto Web</h1>
+            <p class="text-stone-500 mb-8 leading-tight">Faça login para gerir as suas horas de trabalho de forma segura.</p>
+            <button onclick="window.loginGoogle()" class="flex items-center justify-center gap-3 w-full py-4 bg-white border-2 border-stone-200 rounded-2xl hover:bg-stone-50 transition-all font-bold shadow-sm">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google.svg" width="20">
+                Entrar com o Google
+            </button>
+        </div>
+    </div>
+
+    <div id="app-screen" class="hidden max-w-5xl mx-auto py-12 px-6">
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-10">
+            <div>
+                <p class="text-amber-600 font-bold uppercase text-xs tracking-widest mb-1">Controlo de Horário</p>
+                <h1 class="text-4xl font-black tracking-tight" id="user-email">...</h1>
+            </div>
+            <button onclick="window.logout()" class="px-4 py-2 bg-stone-200 hover:bg-red-100 hover:text-red-700 rounded-xl transition-all font-bold text-xs">Terminar Sessão</button>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+            <div class="bg-white p-8 rounded-3xl shadow-sm border border-stone-200">
+                <p class="text-stone-400 text-xs font-bold uppercase mb-2">Total Trabalhado (Mês)</p>
+                <p class="text-5xl font-black text-stone-800" id="total-month">00:00</p>
+            </div>
+            <div class="bg-amber-500 p-8 rounded-3xl shadow-lg text-white">
+                <p class="text-amber-100 text-xs font-bold uppercase mb-2">Horas Extras Acumuladas</p>
+                <p class="text-5xl font-black" id="extra-month">00:00</p>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
+            <div class="p-6 border-b flex justify-between items-center bg-stone-50/50">
+                <h2 class="font-black text-stone-700">Histórico de Registos</h2>
+                <button onclick="window.addNewRow()" class="bg-stone-900 text-white px-6 py-3 rounded-2xl text-sm font-bold hover:bg-stone-800 transition-all shadow-md">Adicionar Dia</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="text-[10px] font-black text-stone-400 uppercase bg-white border-b">
+                        <tr>
+                            <th class="p-4">Data</th>
+                            <th class="p-4 text-center">Entrada 1</th>
+                            <th class="p-4 text-center">Saída 1</th>
+                            <th class="p-4 text-center">Entrada 2</th>
+                            <th class="p-4 text-center">Saída 2</th>
+                            <th class="p-4 text-center text-stone-600">Total</th>
+                            <th class="p-4 text-center text-amber-600">Extra</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <footer class="mt-8 text-center text-stone-400 text-xs italic">
+            Configuração completa com Measurement ID ativa.
+        </footer>
+    </div>
+
+</body>
+</html>

@@ -7,26 +7,31 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // Configuração do Firebase
-        const firebaseConfig = {
-            apiKey: "AIzaSyBI1P-cNo6UHmM2jluVicuV2GaTk3XPy7U",
-            authDomain: "projeto-pweb-8bf00.firebaseapp.com",
-            projectId: "projeto-pweb-8bf00",
-            storageBucket: "projeto-pweb-8bf00.firebasestorage.app",
-            messagingSenderId: "547034401386",
-            appId: "1:547034401386:web:c1f86c7782495e9ae31813",
-            measurementId: "G-E8S9Q89K24" 
+        // Configuração do Firebase do Usuário
+        const FIREBASE_USER_CONFIG = {
+            apiKey: "AIzaSyCai6niQ2r0_DuVESfu0fzbTNe6l7NePXk", 
+            authDomain: "meu-ponto-app-bada8.firebaseapp.com", 
+            projectId: "meu-ponto-app-bada8", 
+            storageBucket: "meu-ponto-app-bada8.firebasestorage.app", 
+            messagingSenderId: "498041645872",
+            appId: "1:498041645872:web:0248fd4c13dcbc8162f6f5" 
         };
+
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config) 
+            : FIREBASE_USER_CONFIG;
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId;
         
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
         const provider = new GoogleAuthProvider();
 
-        // Parâmetros de Cálculo
+        // Parâmetros de cálculo
         const VALOR_HORA_NORMAL = 11.27; 
         const VALOR_HORA_EXTRA = VALOR_HORA_NORMAL * 1.5;
         const JORNADA_DIARIA_MINUTOS = 420; // 7 horas
@@ -35,6 +40,7 @@
         let allEntries = [];
         let currentMonthKey = ''; 
 
+        // Formatação de Dinheiro
         const formatBRL = (valor) => {
             return new Intl.NumberFormat('pt-BR', {
                 style: 'currency',
@@ -42,22 +48,69 @@
             }).format(valor || 0);
         };
 
+        // Converter String "HH:MM" para Minutos
         const tToM = (t) => {
-            if (!t || !t.includes(':')) return 0;
+            if (!t || !t.includes(':')) return null;
             const [h, m] = t.split(':');
-            return parseInt(h) * 60 + parseInt(m);
+            return (parseInt(h) * 60) + parseInt(m);
         };
 
+        // Converter Minutos para String "HH:MM"
         const mToT = (m) => {
-            const h = Math.floor(Math.abs(m) / 60);
-            const min = Math.floor(Math.abs(m) % 60);
-            return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+            const isNegative = m < 0;
+            const absoluteM = Math.abs(m);
+            const h = Math.floor(absoluteM / 60);
+            const min = Math.floor(absoluteM % 60);
+            return `${isNegative ? '-' : ''}${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+        };
+
+        // Lógica de Cálculo Centralizada
+        const calculateDayStats = (e1, s1, e2, s2) => {
+            const mE1 = tToM(e1), mS1 = tToM(s1), mE2 = tToM(e2), mS2 = tToM(s2);
+            let totalMin = 0;
+
+            // Soma os períodos preenchidos corretamente
+            if (mE1 !== null && mS1 !== null && mS1 > mE1) totalMin += (mS1 - mE1);
+            if (mE2 !== null && mS2 !== null && mS2 > mE2) totalMin += (mS2 - mE2);
+
+            // Correção para entrada simples (apenas E1 e S2)
+            if (totalMin === 0 && mE1 !== null && mS2 !== null && mS2 > mE1) {
+                totalMin = (mS2 - mE1);
+            }
+
+            const normalMin = Math.min(totalMin, JORNADA_DIARIA_MINUTOS);
+            const extraMin = Math.max(0, totalMin - JORNADA_DIARIA_MINUTOS);
+            
+            const ganhoNormal = (normalMin / 60) * VALOR_HORA_NORMAL;
+            const ganhoExtra = (extraMin / 60) * VALOR_HORA_EXTRA;
+
+            return { 
+                totalMin, 
+                normalMin, 
+                extraMin, 
+                ganhoNormal, 
+                ganhoExtra, 
+                ganhoTotal: ganhoNormal + ganhoExtra 
+            };
+        };
+
+        // Inicialização de Autenticação
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else if (!auth.currentUser) {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.error("Erro auth:", err);
+            }
         };
 
         onAuthStateChanged(auth, user => {
             if (user) {
                 userId = user.uid;
-                document.getElementById('user-email').textContent = user.email;
+                document.getElementById('user-email').textContent = user.email || `ID: ${user.uid.substring(0,8)}...`;
                 document.getElementById('login-screen').classList.add('hidden');
                 document.getElementById('app-screen').classList.remove('hidden');
                 initDataListener();
@@ -68,45 +121,43 @@
             }
         });
 
-        window.loginGoogle = () => signInWithPopup(auth, provider).catch(err => console.error("Erro Login:", err));
+        initAuth();
+
+        window.loginGoogle = () => signInWithPopup(auth, provider).catch(err => console.error(err));
         window.logout = () => signOut(auth);
 
+        // Listener do Banco de Dados
         function initDataListener() {
             if (!userId) return;
-            const q = query(collection(db, 'artifacts', firebaseConfig.projectId, 'users', userId, 'registros_horario'));
+            const q = query(collection(db, 'artifacts', appId, 'users', userId, 'registros_horario'));
             onSnapshot(q, snap => {
                 allEntries = [];
                 snap.forEach(d => allEntries.push({ ...d.data(), id: d.id }));
-                
                 if (!currentMonthKey) {
                     const n = new Date();
                     currentMonthKey = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
                 }
                 renderApp();
-            }, err => console.error("Erro de Permissão:", err));
+            }, err => console.error(err));
         }
 
+        // Salvar Entrada
         async function saveEntry(date, e1, s1, e2, s2) {
             if (!userId) return;
-            const mE1 = tToM(e1), mS1 = tToM(s1), mE2 = tToM(e2), mS2 = tToM(s2);
-            
-            const totalMin = (mS1 > mE1 ? mS1 - mE1 : 0) + (mS2 > mE2 ? mS2 - mE2 : 0);
-            const normalMin = Math.min(totalMin, JORNADA_DIARIA_MINUTOS);
-            const extraMin = Math.max(0, totalMin - JORNADA_DIARIA_MINUTOS);
-            
-            const ganhoNormal = (normalMin / 60) * VALOR_HORA_NORMAL;
-            const ganhoExtra = (extraMin / 60) * VALOR_HORA_EXTRA;
-
+            const stats = calculateDayStats(e1, s1, e2, s2);
             const docId = date.replace(/-/g, '_');
             try {
-                await setDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'users', userId, 'registros_horario', docId), {
+                await setDoc(doc(db, 'artifacts', appId, 'users', userId, 'registros_horario', docId), {
                     date, entrada1: e1, saida1: s1, entrada2: e2, saida2: s2,
-                    totalMinutes: totalMin, extraMinutes: extraMin, normalMinutes: normalMin,
-                    ganhoDiario: ganhoNormal + ganhoExtra,
+                    totalMinutes: stats.totalMin, 
+                    extraMinutes: stats.extraMin, 
+                    normalMinutes: stats.normalMin,
+                    ganhoDiario: stats.ganhoTotal,
+                    ganhoExtraDiario: stats.ganhoExtra,
                     updatedAt: Timestamp.now()
                 }, { merge: true });
             } catch (err) {
-                console.error("Erro ao salvar:", err);
+                console.error(err);
             }
         }
 
@@ -119,11 +170,12 @@
         };
 
         window.deletarRegistro = async (id) => {
-            if(confirm("Deseja excluir este registro?")) {
-                await deleteDoc(doc(db, 'artifacts', firebaseConfig.projectId, 'users', userId, 'registros_horario', id));
+            if(confirm("Deseja realmente excluir este registro?")) {
+                await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'registros_horario', id));
             }
         };
 
+        // Renderização da Interface
         function renderApp() {
             const tbody = document.getElementById('table-body');
             const filtered = allEntries.filter(e => e.date && e.date.substring(0, 7) === currentMonthKey);
@@ -131,96 +183,93 @@
             
             let totalNormalMin = 0;
             let totalExtraMin = 0;
+            let totalGanhoExtras = 0;
             let totalGanhoGeral = 0;
 
             filtered.sort((a,b) => b.date.localeCompare(a.date)).forEach(d => {
-                // Recalcular minutos para garantir que o dashboard nunca fique zerado por erro de cache de dados
-                const mE1 = tToM(d.entrada1), mS1 = tToM(d.saida1), mE2 = tToM(d.entrada2), mS2 = tToM(d.saida2);
-                const totalMinDia = (mS1 > mE1 ? mS1 - mE1 : 0) + (mS2 > mE2 ? mS2 - mE2 : 0);
-                const normalMinDia = Math.min(totalMinDia, JORNADA_DIARIA_MINUTOS);
-                const extraMinDia = Math.max(0, totalMinDia - JORNADA_DIARIA_MINUTOS);
+                const stats = calculateDayStats(d.entrada1, d.saida1, d.entrada2, d.saida2);
                 
-                totalNormalMin += normalMinDia;
-                totalExtraMin += extraMinDia;
-                totalGanhoGeral += (d.ganhoDiario || 0);
+                totalNormalMin += stats.normalMin;
+                totalExtraMin += stats.extraMin;
+                totalGanhoExtras += stats.ganhoExtra;
+                totalGanhoGeral += stats.ganhoTotal;
 
                 const tr = document.createElement('tr');
-                tr.className = "border-b hover:bg-stone-50 group";
+                tr.className = "border-b hover:bg-stone-50 group transition-colors";
                 tr.innerHTML = `
                     <td class="p-4"><input type="date" name="date" value="${d.date}" onchange="window.handleInput(event)" class="bg-transparent outline-none"></td>
                     <td class="p-4 text-center"><input type="time" name="e1" value="${d.entrada1||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
                     <td class="p-4 text-center"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
                     <td class="p-4 text-center"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
                     <td class="p-4 text-center"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-24 text-center bg-stone-100 rounded-lg p-1"></td>
-                    <td class="p-4 text-center font-bold text-stone-500">${mToT(totalMinDia)}</td>
-                    <td class="p-4 text-center font-bold text-amber-600">${mToT(extraMinDia)}</td>
-                    <td class="p-4 text-right font-bold text-green-700">${formatBRL(d.ganhoDiario)}</td>
+                    <td class="p-4 text-center font-bold text-stone-500">${mToT(stats.totalMin)}</td>
+                    <td class="p-4 text-center font-bold text-amber-600">${mToT(stats.extraMin)}</td>
+                    <td class="p-4 text-right font-bold text-amber-700">${formatBRL(stats.ganhoExtra)}</td>
+                    <td class="p-4 text-right font-bold text-green-700">${formatBRL(stats.ganhoTotal)}</td>
                     <td class="p-4 text-center">
-                        <button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-600 transition-all font-bold">✕</button>
+                        <button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-600 font-bold transition-opacity">✕</button>
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
 
-            // Atualização dos Cards Superiores
             document.getElementById('total-horas-normais').textContent = mToT(totalNormalMin);
             document.getElementById('total-horas-extras').textContent = mToT(totalExtraMin);
-            document.getElementById('salario-base').textContent = formatBRL((totalNormalMin / 60) * VALOR_HORA_NORMAL);
+            document.getElementById('ganho-extras-top').textContent = formatBRL(totalGanhoExtras);
             document.getElementById('salario-final').textContent = formatBRL(totalGanhoGeral);
         }
 
         window.addNewRow = () => {
             const today = new Date().toISOString().split('T')[0];
-            saveEntry(today, '08:00', '12:00', '13:00', '17:00');
+            saveEntry(today, '08:00', '', '', '16:00');
         };
     </script>
 </head>
 <body class="bg-stone-100 text-stone-800 min-h-screen">
-
+    <!-- Tela de Login -->
     <div id="login-screen" class="flex items-center justify-center min-h-screen">
         <div class="bg-white p-10 rounded-[2.5rem] shadow-xl text-center max-w-sm w-full border border-stone-200">
-            <h1 class="text-3xl font-black mb-2 tracking-tighter">Ponto BRL</h1>
+            <h1 class="text-3xl font-black mb-2 tracking-tighter text-stone-900">Ponto BRL</h1>
             <p class="text-stone-400 text-sm mb-8 font-medium">Controle salarial em Tempo Real</p>
-            <button onclick="window.loginGoogle()" class="flex items-center justify-center gap-3 w-full py-4 bg-stone-900 text-white rounded-2xl hover:bg-stone-800 transition-all font-bold shadow-lg">
-                Entrar com Google
-            </button>
+            <button onclick="window.loginGoogle()" class="w-full py-4 bg-stone-900 text-white rounded-2xl hover:bg-stone-800 font-bold shadow-lg transition-colors">Entrar com Google</button>
         </div>
     </div>
 
-    <div id="app-screen" class="hidden max-w-6xl mx-auto py-10 px-6">
+    <!-- Interface Principal -->
+    <div id="app-screen" class="hidden max-w-7xl mx-auto py-10 px-6">
         <header class="flex justify-between items-center mb-8">
-            <h1 id="user-email" class="font-black text-xl tracking-tight text-stone-900">...</h1>
+            <h1 id="user-email" class="font-black text-xl tracking-tight text-stone-900">Carregando...</h1>
             <button onclick="window.logout()" class="text-xs font-bold bg-stone-200 px-4 py-2 rounded-xl hover:bg-red-100 transition-colors">Sair</button>
         </header>
 
-        <!-- DASHBOARD SALARIAL -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
-                <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Horas Mensais</p>
+        <!-- Cards de Resumo -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm text-center">
+                <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Horas Normais</p>
                 <p id="total-horas-normais" class="text-2xl font-black text-stone-700">00:00</p>
             </div>
-            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
+            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm text-center">
                 <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Horas Extras</p>
                 <p id="total-horas-extras" class="text-2xl font-black text-amber-600">00:00</p>
             </div>
-            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
-                <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Salário Base</p>
-                <p id="salario-base" class="text-2xl font-black text-stone-500">R$ 0,00</p>
+            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm text-center border-amber-100">
+                <p class="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-1">Ganho Extras (50%)</p>
+                <p id="ganho-extras-top" class="text-2xl font-black text-amber-700">R$ 0,00</p>
             </div>
-            <div class="bg-stone-900 p-6 rounded-3xl shadow-xl border border-stone-800">
-                <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Salário Final (BRL)</p>
+            <div class="bg-stone-900 p-6 rounded-3xl shadow-xl border border-stone-800 text-center">
+                <p class="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1">Ganho Total Bruto</p>
                 <p id="salario-final" class="text-2xl font-black text-white">R$ 0,00</p>
             </div>
         </div>
 
-        <!-- TABELA -->
+        <!-- Tabela de Registros -->
         <div class="bg-white rounded-[2rem] border border-stone-200 overflow-hidden shadow-sm">
-            <div class="p-6 border-b flex justify-between items-center bg-stone-50/50">
-                <h2 class="font-black text-stone-800">Registros do Mês</h2>
-                <button onclick="window.addNewRow()" class="bg-green-600 text-white px-6 py-2.5 rounded-2xl text-sm font-bold hover:bg-green-700 transition-all shadow-md active:scale-95">+ Novo Dia</button>
+            <div class="p-6 border-b flex flex-wrap justify-between items-center bg-stone-50/50 gap-4">
+                <h2 class="font-black text-stone-800 text-lg">Folha de Ponto</h2>
+                <button onclick="window.addNewRow()" class="bg-green-600 text-white px-6 py-2 rounded-2xl text-sm font-bold hover:bg-green-700 shadow-md transition-all active:scale-95">+ Adicionar Dia</button>
             </div>
             <div class="overflow-x-auto">
-                <table class="w-full text-left text-sm">
+                <table class="w-full text-left text-sm min-w-[900px]">
                     <thead class="bg-stone-50 border-b text-stone-400 font-bold text-[10px] uppercase">
                         <tr>
                             <th class="p-4">Data</th>
@@ -229,12 +278,15 @@
                             <th class="p-4 text-center">Ent. 2</th>
                             <th class="p-4 text-center">Saí. 2</th>
                             <th class="p-4 text-center">Total</th>
-                            <th class="p-4 text-center text-amber-600">Extras</th>
-                            <th class="p-4 text-right">Ganho Diário</th>
+                            <th class="p-4 text-center">Extras</th>
+                            <th class="p-4 text-right text-amber-600">Adic. Extras</th>
+                            <th class="p-4 text-right text-green-600">Ganho Dia</th>
                             <th class="p-4"></th>
                         </tr>
                     </thead>
-                    <tbody id="table-body"></tbody>
+                    <tbody id="table-body">
+                        <!-- Gerado via JavaScript -->
+                    </tbody>
                 </table>
             </div>
         </div>

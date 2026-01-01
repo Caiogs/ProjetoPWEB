@@ -8,10 +8,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@200;400;600;800&display=swap" rel="stylesheet">
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Configuração segura fornecida pelo ambiente
         const firebaseConfig = JSON.parse('{"apiKey":"AIzaSyCai6niQ2r0_DuVESfu0fzbTNe6l7NePXk","authDomain":"meu-ponto-app-bada8.firebaseapp.com","projectId":"meu-ponto-app-bada8","storageBucket":"meu-ponto-app-bada8.firebasestorage.app","messagingSenderId":"498041645872","appId":"1:498041645872:web:0248fd4c13dcbc8162f6f5"}');
 
         const app = initializeApp(firebaseConfig);
@@ -20,28 +19,19 @@
         const provider = new GoogleAuthProvider();
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'ponto-brl-v2';
 
-        const CONFIG = {
-            VALOR_HORA: 11.27,
-            JORNADA_DIARIA: 420,
-            PERCENTUAL_EXTRA: 1.50
-        };
-
         let state = {
             user: null,
             entries: [],
             currentMonth: new Date().toISOString().substring(0, 7),
             loading: true,
-            authError: null
+            inIframe: window.self !== window.top
         };
 
         const fCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
         const tToM = (t) => { if (!t || !t.includes(':')) return 0; const [h, m] = t.split(':').map(Number); return (h * 60) + m; };
-        const mToT = (m) => { 
-            const absM = Math.floor(Math.abs(m));
-            const h = Math.floor(absM / 60); 
-            const min = absM % 60; 
-            return `${m < 0 ? '-' : ''}${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`; 
-        };
+        const mToT = (m) => { const absM = Math.floor(Math.abs(m)); const h = Math.floor(absM / 60); const min = absM % 60; return `${m < 0 ? '-' : ''}${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`; };
+
+        const CONFIG = { VALOR_HORA: 11.27, JORNADA_DIARIA: 420, PERCENTUAL_EXTRA: 1.50 };
 
         const calcEntry = (d) => {
             const diff = (s, e) => {
@@ -57,62 +47,47 @@
             return { total, extra, valorTotal: valorNormal + valorExtra, valorExtra };
         };
 
-        // Auth Logic
         window.loginWithGoogle = async () => {
-            state.authError = null;
-            render();
-            try {
-                await signInWithPopup(auth, provider);
-            } catch (e) {
-                console.error("Erro no login:", e);
-                state.authError = "O Login com Google pode estar bloqueado no frame da prévia. Tente o modo anônimo para testar aqui.";
-                render();
+            if (state.inIframe) {
+                alert("O Login com Google é bloqueado dentro de quadros (iframes). Use o 'Entrar como Convidado' para testar aqui ou abra o site em uma nova aba.");
+                return;
             }
+            try { await signInWithPopup(auth, provider); } catch (e) { console.error(e); }
         };
 
         window.loginAnonymously = async () => {
-            try {
-                await signInAnonymously(auth);
-            } catch (e) {
-                console.error("Erro no login anônimo:", e);
-            }
+            state.loading = true;
+            render();
+            try { await signInAnonymously(auth); } catch (e) { console.error(e); state.loading = false; render(); }
         };
 
         window.logout = () => signOut(auth);
 
         const initSync = (user) => {
-            // Regra 1: Caminho estrito para Firestore
             const colPath = collection(db, 'artifacts', appId, 'users', user.uid, 'ponto_entries');
-            const q = query(colPath);
-            
-            onSnapshot(q, (snap) => {
+            onSnapshot(colPath, (snap) => {
                 state.entries = [];
                 snap.forEach(doc => state.entries.push({ id: doc.id, ...doc.data() }));
                 state.loading = false;
                 render();
-            }, (err) => {
-                console.error("Erro Firestore:", err);
-                state.loading = false;
-                render();
+            }, (err) => { console.error(err); state.loading = false; render(); });
+        };
+
+        const startApp = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            }
+            onAuthStateChanged(auth, (user) => {
+                state.user = user;
+                if (user) initSync(user);
+                else { state.loading = false; render(); }
             });
         };
 
-        onAuthStateChanged(auth, (user) => {
-            state.user = user;
-            if (user) {
-                initSync(user);
-            } else {
-                state.loading = false;
-                render();
-            }
-        });
-
         window.saveData = async (id, payload) => {
             if (!state.user) return;
-            try {
-                const docRef = doc(db, 'artifacts', appId, 'users', state.user.uid, 'ponto_entries', id);
-                await setDoc(docRef, { ...payload, updatedAt: Timestamp.now() }, { merge: true });
-            } catch (e) { console.error(e); }
+            const docRef = doc(db, 'artifacts', appId, 'users', state.user.uid, 'ponto_entries', id);
+            await setDoc(docRef, { ...payload, updatedAt: Timestamp.now() }, { merge: true });
         };
 
         window.addEntry = async () => {
@@ -123,7 +98,7 @@
 
         window.updateField = (id, field, value) => {
             const entry = state.entries.find(e => e.id === id);
-            if (entry && entry[field] !== value) {
+            if (entry) {
                 entry[field] = value;
                 window.saveData(id, { [field]: value });
                 render();
@@ -131,19 +106,15 @@
         };
 
         window.removeEntry = async (id) => {
-            if (!state.user) return;
-            try {
-                await deleteDoc(doc(db, 'artifacts', appId, 'users', state.user.uid, 'ponto_entries', id));
-            } catch (e) { console.error(e); }
+            await deleteDoc(doc(db, 'artifacts', appId, 'users', state.user.uid, 'ponto_entries', id));
         };
 
         window.setMonth = (m) => { state.currentMonth = m; render(); };
 
         function render() {
             const root = document.getElementById('app');
-            
             if (state.loading) {
-                root.innerHTML = `<div class="flex items-center justify-center h-64 text-indigo-500 font-bold animate-pulse">Carregando Nuvem...</div>`;
+                root.innerHTML = `<div class="flex flex-col items-center justify-center h-64"><div class="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>`;
                 return;
             }
 
@@ -154,19 +125,17 @@
                             <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                         </div>
                         <h1 class="text-3xl font-extrabold text-slate-900 mb-2">PONTO.BRL Cloud</h1>
-                        <p class="text-slate-500 mb-8 max-w-xs">Escolha como deseja entrar para salvar seus dados.</p>
+                        <p class="text-slate-500 mb-8 max-w-xs">Gerencie suas horas com sincronização automática.</p>
                         
                         <div class="flex flex-col gap-3 w-full max-w-xs">
-                            <button onclick="loginWithGoogle()" class="flex items-center justify-center gap-3 bg-white border border-slate-200 shadow-sm hover:shadow-md px-6 py-3 rounded-2xl font-bold text-slate-700 transition-all">
-                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
-                                Entrar com Google
+                            <button onclick="loginAnonymously()" class="bg-indigo-600 text-white px-6 py-4 rounded-2xl font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 active:scale-95 transition-all">
+                                Entrar como Convidado (Recomendado)
                             </button>
-                            <button onclick="loginAnonymously()" class="text-sm font-bold text-slate-400 hover:text-indigo-600 transition-all">
-                                Testar sem conta (Anônimo)
+                            <button onclick="loginWithGoogle()" class="flex items-center justify-center gap-3 bg-white border border-slate-200 px-6 py-3 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all ${state.inIframe ? 'opacity-50 cursor-not-allowed' : ''}">
+                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
+                                Google Login ${state.inIframe ? '(Bloqueado no Frame)' : ''}
                             </button>
                         </div>
-
-                        ${state.authError ? `<div class="mt-6 p-4 bg-amber-50 text-amber-700 text-xs rounded-xl border border-amber-100">${state.authError}</div>` : ''}
                     </div>
                 `;
                 return;
@@ -174,10 +143,7 @@
 
             const months = [...new Set(state.entries.map(e => e.date.substring(0, 7)))].sort().reverse();
             if (!months.includes(state.currentMonth)) months.unshift(state.currentMonth);
-
-            const filtered = state.entries
-                .filter(e => e.date.startsWith(state.currentMonth))
-                .sort((a,b) => b.date.localeCompare(a.date));
+            const filtered = state.entries.filter(e => e.date.startsWith(state.currentMonth)).sort((a,b) => b.date.localeCompare(a.date));
 
             let stats = { totalVal: 0, extraVal: 0, extraMin: 0, hoursMin: 0 };
             filtered.forEach(e => {
@@ -188,77 +154,75 @@
 
             root.innerHTML = `
                 <div class="space-y-6">
-                    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-[2rem] shadow-sm">
                         <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold overflow-hidden">
-                                ${state.user.photoURL ? `<img src="${state.user.photoURL}">` : state.user.displayName?.[0] || 'U'}
+                            <div class="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center font-bold text-slate-600">
+                                ${state.user.photoURL ? `<img src="${state.user.photoURL}" class="rounded-full">` : 'U'}
                             </div>
                             <div>
-                                <h2 class="text-lg font-bold text-slate-900 leading-tight">${state.user.isAnonymous ? 'Modo Visitante' : state.user.displayName}</h2>
-                                <button onclick="logout()" class="text-[10px] font-black uppercase tracking-wider text-red-400 hover:text-red-600">Encerrar Sessão</button>
+                                <h2 class="text-lg font-bold text-slate-900 leading-tight">${state.user.isAnonymous ? 'Modo Convidado' : (state.user.displayName || 'Usuário')}</h2>
+                                <button onclick="logout()" class="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-red-500 transition-colors">Sair da Nuvem</button>
                             </div>
                         </div>
-                        <div class="flex gap-2">
-                            <select onchange="setMonth(this.value)" class="bg-white border-none shadow-sm rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none">
+                        <div class="flex items-center gap-2">
+                            <select onchange="setMonth(this.value)" class="bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none">
                                 ${months.map(m => `<option value="${m}" ${state.currentMonth === m ? 'selected' : ''}>${m}</option>`).join('')}
                             </select>
-                            <button onclick="addEntry()" class="bg-indigo-600 text-white px-5 py-2 rounded-xl text-sm font-bold shadow-lg hover:bg-indigo-700 transition-all">
+                            <button onclick="addEntry()" class="bg-indigo-600 text-white px-5 py-2 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 transition-all">
                                 + Novo Registro
                             </button>
                         </div>
                     </header>
 
                     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                        <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-50">
-                            <span class="text-[10px] font-black text-slate-400 uppercase">Horas Totais</span>
+                        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-50">
+                            <p class="text-[10px] font-black text-slate-400 uppercase mb-1">Total Horas</p>
                             <div class="text-2xl font-black text-slate-800">${mToT(stats.hoursMin)}</div>
                         </div>
-                        <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-50">
-                            <span class="text-[10px] font-black text-amber-500 uppercase">Horas Extras</span>
+                        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-50">
+                            <p class="text-[10px] font-black text-amber-500 uppercase mb-1">Extras (1.5x)</p>
                             <div class="text-2xl font-black text-amber-600">${mToT(stats.extraMin)}</div>
                         </div>
-                        <div class="bg-indigo-50 p-5 rounded-[2rem] border border-indigo-100">
-                            <span class="text-[10px] font-black text-indigo-600 uppercase">Ganhos Extras</span>
+                        <div class="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100">
+                            <p class="text-[10px] font-black text-indigo-600 uppercase mb-1">Valor Extras</p>
                             <div class="text-2xl font-black text-indigo-700">${fCurrency(stats.extraVal)}</div>
                         </div>
-                        <div class="bg-slate-900 p-5 rounded-[2rem] shadow-xl shadow-slate-200">
-                            <span class="text-[10px] font-black text-slate-500 uppercase">Total Estimado</span>
+                        <div class="bg-slate-900 p-6 rounded-[2rem] shadow-xl">
+                            <p class="text-[10px] font-black text-slate-500 uppercase mb-1">Ganhos Totais</p>
                             <div class="text-2xl font-black text-white">${fCurrency(stats.totalVal)}</div>
                         </div>
                     </div>
 
-                    <div class="bg-white rounded-[2.5rem] shadow-sm border border-slate-50 overflow-hidden">
+                    <div class="bg-white rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
                         <div class="overflow-x-auto">
-                            <table class="w-full text-left border-collapse">
+                            <table class="w-full text-left text-sm">
                                 <thead>
                                     <tr class="bg-slate-50/50 text-[10px] font-black text-slate-400 uppercase">
-                                        <th class="py-5 px-6">Data</th>
-                                        <th class="py-5 px-2 text-center">Entrada 1</th>
-                                        <th class="py-5 px-2 text-center">Saída 1</th>
-                                        <th class="py-5 px-2 text-center">Entrada 2</th>
-                                        <th class="py-5 px-2 text-center">Saída 2</th>
-                                        <th class="py-5 px-2 text-center">Extra</th>
-                                        <th class="py-5 px-6 text-right">Valor Dia</th>
-                                        <th class="py-5 px-4"></th>
+                                        <th class="py-4 px-6">Data</th>
+                                        <th class="py-4 px-2 text-center">Ent. 1</th>
+                                        <th class="py-4 px-2 text-center">Saí. 1</th>
+                                        <th class="py-4 px-2 text-center">Ent. 2</th>
+                                        <th class="py-4 px-2 text-center">Saí. 2</th>
+                                        <th class="py-4 px-2 text-center">Extra</th>
+                                        <th class="py-4 px-6 text-right">Ganho</th>
+                                        <th class="py-4 px-6"></th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-50">
                                     ${filtered.map(e => {
                                         const c = calcEntry(e);
                                         return `
-                                            <tr class="hover:bg-slate-50/30 transition-colors">
-                                                <td class="py-4 px-6">
-                                                    <input type="date" value="${e.date}" onchange="updateField('${e.id}', 'date', this.value)" class="bg-transparent font-bold text-slate-700 outline-none text-sm">
-                                                </td>
-                                                <td class="py-4 px-2 text-center"><input type="text" value="${e.e1}" onblur="updateField('${e.id}', 'e1', this.value)" class="w-14 text-center bg-slate-100/50 rounded-lg py-1 text-xs font-medium border-none focus:ring-2 ring-indigo-500/20"></td>
-                                                <td class="py-4 px-2 text-center"><input type="text" value="${e.s1}" onblur="updateField('${e.id}', 's1', this.value)" class="w-14 text-center bg-slate-100/50 rounded-lg py-1 text-xs font-medium border-none focus:ring-2 ring-indigo-500/20"></td>
-                                                <td class="py-4 px-2 text-center"><input type="text" value="${e.e2}" onblur="updateField('${e.id}', 'e2', this.value)" class="w-14 text-center bg-slate-100/50 rounded-lg py-1 text-xs font-medium border-none focus:ring-2 ring-indigo-500/20"></td>
-                                                <td class="py-4 px-2 text-center"><input type="text" value="${e.s2}" onblur="updateField('${e.id}', 's2', this.value)" class="w-14 text-center bg-slate-100/50 rounded-lg py-1 text-xs font-medium border-none focus:ring-2 ring-indigo-500/20"></td>
-                                                <td class="py-4 px-2 text-center"><span class="text-xs font-bold ${c.extra > 0 ? 'text-amber-500' : 'text-slate-300'}">${mToT(c.extra)}</span></td>
-                                                <td class="py-4 px-6 text-right font-black text-slate-800 text-sm">${fCurrency(c.valorTotal)}</td>
-                                                <td class="py-4 px-4 text-center">
-                                                    <button onclick="removeEntry('${e.id}')" class="text-slate-200 hover:text-red-400 transition-colors p-2">
-                                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                                            <tr class="group hover:bg-slate-50/30 transition-colors">
+                                                <td class="py-3 px-6"><input type="date" value="${e.date}" onchange="updateField('${e.id}', 'date', this.value)" class="bg-transparent font-bold outline-none"></td>
+                                                <td class="py-3 px-2 text-center"><input type="text" value="${e.e1}" onblur="updateField('${e.id}', 'e1', this.value)" class="w-12 text-center bg-slate-100 rounded p-1 font-mono text-xs"></td>
+                                                <td class="py-3 px-2 text-center"><input type="text" value="${e.s1}" onblur="updateField('${e.id}', 's1', this.value)" class="w-12 text-center bg-slate-100 rounded p-1 font-mono text-xs"></td>
+                                                <td class="py-3 px-2 text-center"><input type="text" value="${e.e2}" onblur="updateField('${e.id}', 'e2', this.value)" class="w-12 text-center bg-slate-100 rounded p-1 font-mono text-xs"></td>
+                                                <td class="py-3 px-2 text-center"><input type="text" value="${e.s2}" onblur="updateField('${e.id}', 's2', this.value)" class="w-12 text-center bg-slate-100 rounded p-1 font-mono text-xs"></td>
+                                                <td class="py-3 px-2 text-center"><span class="font-bold ${c.extra > 0 ? 'text-amber-500' : 'text-slate-300'}">${mToT(c.extra)}</span></td>
+                                                <td class="py-3 px-6 text-right font-black text-slate-700">${fCurrency(c.valorTotal)}</td>
+                                                <td class="py-3 px-6 text-center">
+                                                    <button onclick="removeEntry('${e.id}')" class="text-slate-300 hover:text-red-500 transition-colors">
+                                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"></path></svg>
                                                     </button>
                                                 </td>
                                             </tr>
@@ -267,18 +231,18 @@
                                 </tbody>
                             </table>
                         </div>
-                        ${filtered.length === 0 ? `<div class="py-20 text-center text-slate-300 font-medium">Nenhum registro para este mês.</div>` : ''}
                     </div>
                 </div>
             `;
         }
+        window.onload = startApp;
     </script>
     <style>
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #fcfdfe; color: #1e293b; }
-        input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.4; cursor: pointer; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #fbfcfd; color: #1e293b; }
+        input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.3; cursor: pointer; }
     </style>
 </head>
-<body class="p-4 md:p-10 min-h-screen">
-    <div id="app" class="max-w-6xl mx-auto"></div>
+<body class="p-4 md:p-8">
+    <div id="app" class="max-w-5xl mx-auto"></div>
 </body>
 </html>

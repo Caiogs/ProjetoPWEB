@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         const FIREBASE_USER_CONFIG = {
@@ -82,7 +82,11 @@
             }
         };
 
+        // Configurar persistência local
+        setPersistence(auth, browserLocalPersistence);
+
         onAuthStateChanged(auth, async user => {
+            const overlay = document.getElementById('loading-overlay');
             if (user) {
                 userId = user.uid;
                 document.getElementById('user-name').textContent = user.displayName || 'Usuário';
@@ -95,32 +99,37 @@
                     currentMonthKey = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
                 }
                 initDataListener();
+                setTimeout(() => overlay.classList.add('hidden'), 500);
             } else {
                 userId = null;
                 if (unsubscribe) unsubscribe();
                 document.getElementById('app-screen').classList.add('hidden');
                 document.getElementById('login-screen').classList.remove('hidden');
+                overlay.classList.add('hidden');
             }
         });
 
         window.loginGoogle = async () => {
+            document.getElementById('loading-overlay').classList.remove('hidden');
             try {
                 await signInWithPopup(auth, provider);
             } catch (error) {
-                console.error("Erro ao logar:", error);
-                alert("Erro ao conectar com o Google. Verifique se os Pop-ups estão permitidos.");
+                console.error("Erro no login:", error);
+                document.getElementById('loading-overlay').classList.add('hidden');
+                alert("Ocorreu um problema ao conectar com o Google. Verifique sua conexão ou se as janelas pop-up estão bloqueadas.");
             }
         };
 
         function initDataListener() {
             if (unsubscribe) unsubscribe();
-            // IMPORTANTE: Agora os dados ficam na pasta do seu ID do Google
             const q = query(collection(db, 'artifacts', appId, 'users', userId, 'registros_horario'));
             unsubscribe = onSnapshot(q, snap => {
                 allEntries = [];
                 snap.forEach(d => allEntries.push({ ...d.data(), id: d.id }));
                 renderMonthTabs();
                 renderApp();
+            }, (error) => {
+                console.error("Erro no Firestore:", error);
             });
         }
 
@@ -171,7 +180,7 @@
             tabsContainer.innerHTML = monthsFound.map(key => {
                 const [year, month] = key.split('-');
                 const name = new Date(year, month - 1).toLocaleString('pt-BR', { month: 'short' });
-                const active = currentMonthKey === key ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-white text-stone-500 border border-stone-200';
+                const active = currentMonthKey === key ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white text-stone-500 border border-stone-200';
                 return `<button onclick="window.switchTab('${key}')" class="px-6 py-2 rounded-2xl text-xs font-bold uppercase transition-all whitespace-nowrap ${active}">${name} ${year}</button>`;
             }).join('');
         }
@@ -216,67 +225,82 @@
         };
         
         window.handleLogout = async () => {
-            if(confirm("Sair do sistema?")) await signOut(auth);
+            if(confirm("Deseja sair da sua conta?")) await signOut(auth);
         };
     </script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
 </head>
 <body class="bg-indigo-50/30 text-stone-800 min-h-screen font-sans">
     
-    <!-- Tela de Login Google -->
-    <div id="login-screen" class="flex flex-col items-center justify-center min-h-screen p-6">
+    <!-- Overlay de Carregamento -->
+    <div id="loading-overlay" class="fixed inset-0 bg-white/90 z-50 flex flex-col items-center justify-center backdrop-blur-md">
+        <div class="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-6"></div>
+        <p class="font-black text-indigo-950 text-sm tracking-widest uppercase italic animate-pulse">Sincronizando Banco de Dados...</p>
+    </div>
+
+    <!-- Tela de Login -->
+    <div id="login-screen" class="hidden flex flex-col items-center justify-center min-h-screen p-6">
         <div class="bg-white p-10 rounded-[3rem] shadow-2xl text-center max-w-sm w-full border border-indigo-100">
-            <div class="w-20 h-20 bg-indigo-600 rounded-[2rem] flex items-center justify-center mx-auto mb-6 rotate-3 shadow-xl shadow-indigo-200">
-                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <div class="w-20 h-20 bg-indigo-600 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 shadow-xl">
+                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
             </div>
             <h1 class="font-black text-4xl tracking-tighter text-indigo-950 italic mb-2">PONTO.BRL</h1>
-            <p class="text-xs font-bold text-stone-400 uppercase tracking-widest mb-10">Sincronização em Nuvem</p>
+            <p class="text-xs font-bold text-stone-400 uppercase tracking-widest mb-12">Login via Nuvem Google</p>
             
-            <button onclick="window.loginGoogle()" class="group relative w-full flex items-center justify-center gap-3 bg-white border-2 border-stone-200 text-stone-700 font-bold py-4 px-6 rounded-2xl hover:border-indigo-600 transition-all active:scale-95 shadow-sm">
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-6 h-6">
-                Entrar com Google
+            <button onclick="window.loginGoogle()" class="w-full flex items-center justify-center gap-4 bg-white border-2 border-stone-200 text-stone-700 font-bold py-4 px-6 rounded-2xl hover:border-indigo-600 hover:shadow-xl transition-all active:scale-95 group">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-6 h-6 group-hover:scale-110 transition-transform">
+                Entrar com Conta Google
             </button>
-            <p class="mt-6 text-[10px] text-stone-400 leading-relaxed px-4">Ao entrar com o Google, seus dados ficam salvos para sempre no seu e-mail.</p>
+            <p class="mt-8 text-[10px] text-stone-400 px-6 leading-relaxed">Ao fazer login, seus dados ficam protegidos e salvos na sua conta Google pessoal.</p>
         </div>
     </div>
 
     <!-- App Principal -->
     <div id="app-screen" class="hidden max-w-6xl mx-auto py-8 px-4">
-        <header class="flex justify-between items-center mb-10">
+        <header class="flex justify-between items-center mb-10 bg-white p-6 rounded-[2.5rem] shadow-sm border border-stone-100">
             <div class="flex items-center gap-4">
-                <img id="user-photo" src="" class="w-12 h-12 rounded-full border-2 border-white shadow-md">
+                <img id="user-photo" src="" class="w-14 h-14 rounded-full border-2 border-indigo-100 shadow-sm p-0.5">
                 <div>
-                    <h2 id="user-name" class="font-black text-indigo-950 tracking-tight leading-none mb-1 text-lg">...</h2>
-                    <p class="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Sincronizado</p>
+                    <h2 id="user-name" class="font-black text-indigo-950 tracking-tight text-xl leading-none mb-1">...</h2>
+                    <p class="text-[10px] font-bold text-green-500 uppercase tracking-widest flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span> Sincronizado
+                    </p>
                 </div>
             </div>
-            <button onclick="window.handleLogout()" class="text-xs font-black text-red-500 bg-white px-5 py-3 rounded-2xl border border-red-50 hover:bg-red-50 transition-colors shadow-sm">SAIR</button>
+            <button onclick="window.handleLogout()" class="text-xs font-black text-red-500 bg-red-50/50 px-6 py-3 rounded-2xl hover:bg-red-50 transition-all">DESCONECTAR</button>
         </header>
 
         <nav id="month-tabs" class="flex gap-3 mb-8 overflow-x-auto no-scrollbar py-2"></nav>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
-            <div class="bg-white p-6 rounded-[2.5rem] border border-indigo-100 shadow-sm">
+            <div class="bg-white p-6 rounded-[2.5rem] border border-indigo-50 shadow-sm">
                 <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Horas Normais</p>
                 <p id="total-horas-normais" class="text-3xl font-black text-indigo-600 tracking-tighter">00:00</p>
             </div>
-            <div class="bg-white p-6 rounded-[2.5rem] border border-amber-100 shadow-sm">
+            <div class="bg-white p-6 rounded-[2.5rem] border border-amber-50 shadow-sm">
                 <p class="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-2">Horas Extras</p>
                 <p id="total-horas-extras" class="text-3xl font-black text-amber-600 tracking-tighter">00:00</p>
             </div>
-            <div class="bg-white p-6 rounded-[2.5rem] border border-amber-100 shadow-sm">
+            <div class="bg-white p-6 rounded-[2.5rem] border border-amber-50 shadow-sm">
                 <p class="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-2">Ganhos Extras</p>
                 <p id="ganho-extras-top" class="text-3xl font-black text-amber-700 tracking-tighter">R$ 0,00</p>
             </div>
             <div class="bg-indigo-950 p-6 rounded-[2.5rem] shadow-2xl ring-8 ring-indigo-50">
-                <p class="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Salário Total</p>
-                <p id="salario-final" class="text-3xl font-black text-white tracking-tighter">R$ 0,00</p>
+                <p class="text-[10px] font-bold text-indigo-300 uppercase tracking-widest mb-2 text-center">Salário Previsto</p>
+                <p id="salario-final" class="text-3xl font-black text-white tracking-tighter text-center">R$ 0,00</p>
             </div>
         </div>
 
-        <div class="bg-white rounded-[3rem] border border-stone-200 overflow-hidden shadow-xl mb-10">
+        <div class="bg-white rounded-[3rem] border border-stone-200 overflow-hidden shadow-xl mb-12">
             <div class="p-8 border-b flex justify-between items-center bg-stone-50/50">
-                <h2 class="font-black text-stone-800 text-xl tracking-tight">Folha de Frequência</h2>
-                <button onclick="window.addNewRow()" class="bg-indigo-600 text-white px-8 py-3 rounded-2xl text-sm font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 active:scale-95 transition-all">+ NOVO DIA</button>
+                <div>
+                    <h2 class="font-black text-stone-800 text-xl tracking-tight">Folha Mensal</h2>
+                    <p class="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Base de cálculo: 7h diárias</p>
+                </div>
+                <button onclick="window.addNewRow()" class="bg-indigo-600 text-white px-8 py-4 rounded-2xl text-sm font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 active:scale-95 transition-all">+ NOVO DIA</button>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm min-w-[1000px]">

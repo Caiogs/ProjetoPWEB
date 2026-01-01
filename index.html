@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         const FIREBASE_USER_CONFIG = {
@@ -24,11 +24,9 @@
             : FIREBASE_USER_CONFIG;
 
         const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId;
-        
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const provider = new GoogleAuthProvider();
 
         const VALOR_HORA_NORMAL = 11.27; 
         const VALOR_HORA_EXTRA = VALOR_HORA_NORMAL * 1.5;
@@ -38,12 +36,7 @@
         let allEntries = [];
         let currentMonthKey = ''; 
 
-        const formatBRL = (valor) => {
-            return new Intl.NumberFormat('pt-BR', {
-                style: 'currency',
-                currency: 'BRL',
-            }).format(valor || 0);
-        };
+        const formatBRL = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
         const tToM = (t) => {
             if (!t || !t.includes(':')) return null;
@@ -52,93 +45,66 @@
         };
 
         const mToT = (m) => {
-            const isNegative = m < 0;
-            const absoluteM = Math.abs(m);
-            const h = Math.floor(absoluteM / 60);
-            const min = Math.floor(absoluteM % 60);
-            return `${isNegative ? '-' : ''}${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+            const absM = Math.abs(m);
+            const h = Math.floor(absM / 60);
+            const min = Math.floor(absM % 60);
+            return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
         };
 
         const calculateDayStats = (e1, s1, e2, s2) => {
             const mE1 = tToM(e1), mS1 = tToM(s1), mE2 = tToM(e2), mS2 = tToM(s2);
             let totalMin = 0;
-
             if (mE1 !== null && mS1 !== null && mS1 > mE1) totalMin += (mS1 - mE1);
             if (mE2 !== null && mS2 !== null && mS2 > mE2) totalMin += (mS2 - mE2);
+            if (totalMin === 0 && mE1 !== null && mS2 !== null && mS2 > mE1) totalMin = (mS2 - mE1);
 
-            if (totalMin === 0 && mE1 !== null && mS2 !== null && mS2 > mE1) {
-                totalMin = (mS2 - mE1);
-            }
-
-            const normalMin = Math.min(totalMin, JORNADA_DIARIA_MINUtos);
+            const normalMin = Math.min(totalMin, JORNADA_DIARIA_MINUTOS);
             const extraMin = Math.max(0, totalMin - JORNADA_DIARIA_MINUTOS);
             const ganhoNormal = (normalMin / 60) * VALOR_HORA_NORMAL;
             const ganhoExtra = (extraMin / 60) * VALOR_HORA_EXTRA;
 
-            return { 
-                totalMin, normalMin, extraMin, ganhoNormal, ganhoExtra, ganhoTotal: ganhoNormal + ganhoExtra 
-            };
+            return { totalMin, extraMin, ganhoExtra, ganhoTotal: ganhoNormal + ganhoExtra };
         };
 
         const initAuth = async () => {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else if (!auth.currentUser) {
-                    await signInAnonymously(auth);
-                }
-            } catch (err) { console.error(err); }
+            if (!auth.currentUser) await signInAnonymously(auth);
         };
 
         onAuthStateChanged(auth, user => {
             if (user) {
                 userId = user.uid;
-                document.getElementById('user-email').textContent = user.email || `ID: ${user.uid.substring(0,8)}...`;
+                document.getElementById('user-email').textContent = user.email || `Logado`;
                 document.getElementById('login-screen').classList.add('hidden');
                 document.getElementById('app-screen').classList.remove('hidden');
-                
-                // Define mês atual por padrão se estiver vazio
                 if (!currentMonthKey) {
                     const n = new Date();
                     currentMonthKey = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
-                    document.getElementById('month-selector').value = currentMonthKey;
                 }
-                
                 initDataListener();
-            } else {
-                userId = null;
-                document.getElementById('login-screen').classList.remove('hidden');
-                document.getElementById('app-screen').classList.add('hidden');
             }
         });
 
         initAuth();
 
-        window.loginGoogle = () => signInWithPopup(auth, provider).catch(err => console.error(err));
-        window.logout = () => signOut(auth);
-
         function initDataListener() {
-            if (!userId) return;
             const q = query(collection(db, 'artifacts', appId, 'users', userId, 'registros_horario'));
             onSnapshot(q, snap => {
                 allEntries = [];
                 snap.forEach(d => allEntries.push({ ...d.data(), id: d.id }));
+                renderMonthTabs();
                 renderApp();
             });
         }
 
         async function saveEntry(date, e1, s1, e2, s2) {
-            if (!userId) return;
             const stats = calculateDayStats(e1, s1, e2, s2);
             const docId = date.replace(/-/g, '_');
-            try {
-                await setDoc(doc(db, 'artifacts', appId, 'users', userId, 'registros_horario', docId), {
-                    date, entrada1: e1, saida1: s1, entrada2: e2, saida2: s2,
-                    totalMinutes: stats.totalMin, extraMinutes: stats.extraMin, normalMinutes: stats.normalMin,
-                    ganhoDiario: stats.ganhoTotal, ganhoExtraDiario: stats.ganhoExtra,
-                    updatedAt: Timestamp.now()
-                }, { merge: true });
-            } catch (err) { console.error(err); }
+            await setDoc(doc(db, 'artifacts', appId, 'users', userId, 'registros_horario', docId), {
+                date, entrada1: e1, saida1: s1, entrada2: e2, saida2: s2,
+                totalMinutes: stats.totalMin, extraMinutes: stats.extraMin,
+                ganhoDiario: stats.ganhoTotal, ganhoExtraDiario: stats.ganhoExtra,
+                updatedAt: Timestamp.now()
+            }, { merge: true });
         }
 
         window.handleInput = (e) => {
@@ -146,128 +112,126 @@
             const d = row.querySelector('[name=date]').value;
             const e1 = row.querySelector('[name=e1]').value, s1 = row.querySelector('[name=s1]').value;
             const e2 = row.querySelector('[name=e2]').value, s2 = row.querySelector('[name=s2]').value;
-            
-            // Se o usuário mudou a data para outro mês, atualiza o seletor para ele não "perder" o registro de vista
-            if (d && !d.startsWith(currentMonthKey)) {
-                currentMonthKey = d.substring(0, 7);
-                document.getElementById('month-selector').value = currentMonthKey;
-            }
-            
             if(d) saveEntry(d, e1, s1, e2, s2);
         };
 
-        window.changeMonth = (e) => {
-            currentMonthKey = e.target.value;
+        window.deletarRegistro = async (id) => {
+            if(confirm("Excluir?")) await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'registros_horario', id));
+        };
+
+        window.switchTab = (key) => {
+            currentMonthKey = key;
+            renderMonthTabs();
             renderApp();
         };
 
-        window.deletarRegistro = async (id) => {
-            if(confirm("Deseja realmente excluir este registro?")) {
-                await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'registros_horario', id));
-            }
-        };
+        function renderMonthTabs() {
+            const tabsContainer = document.getElementById('month-tabs');
+            const monthsFound = [...new Set(allEntries.map(e => e.date.substring(0, 7)))];
+            
+            // Adiciona o mês atual se não existir nos dados
+            const now = new Date();
+            const nowKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+            if (!monthsFound.includes(nowKey)) monthsFound.push(nowKey);
+
+            monthsFound.sort().reverse();
+            
+            tabsContainer.innerHTML = monthsFound.map(key => {
+                const [year, month] = key.split('-');
+                const name = new Date(year, month - 1).toLocaleString('pt-BR', { month: 'short' });
+                const activeClass = currentMonthKey === key ? 'bg-stone-900 text-white' : 'bg-white text-stone-500 hover:bg-stone-200';
+                return `<button onclick="window.switchTab('${key}')" class="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${activeClass}">${name} ${year}</button>`;
+            }).join('');
+        }
 
         function renderApp() {
             const tbody = document.getElementById('table-body');
-            // FILTRO CORRIGIDO: Agora filtra com base no que estiver selecionado no topo
-            const filtered = allEntries.filter(e => e.date && e.date.startsWith(currentMonthKey));
+            const filtered = allEntries.filter(e => e.date.startsWith(currentMonthKey));
             tbody.innerHTML = '';
             
-            let totalNormalMin = 0; let totalExtraMin = 0; let totalGanhoExtras = 0; let totalGanhoGeral = 0;
+            let tExtraMin = 0; let tGanhoExtras = 0; let tGanhoGeral = 0;
 
             filtered.sort((a,b) => b.date.localeCompare(a.date)).forEach(d => {
-                const stats = calculateDayStats(d.entrada1, d.saida1, d.entrada2, d.saida2);
-                totalNormalMin += stats.normalMin; totalExtraMin += stats.extraMin;
-                totalGanhoExtras += stats.ganhoExtra; totalGanhoGeral += stats.ganhoTotal;
+                const s = calculateDayStats(d.entrada1, d.saida1, d.entrada2, d.saida2);
+                tExtraMin += s.extraMin; tGanhoExtras += s.ganhoExtra; tGanhoGeral += s.ganhoTotal;
 
-                const tr = document.createElement('tr');
-                tr.className = "border-b hover:bg-stone-50 group transition-colors";
-                tr.innerHTML = `
-                    <td class="p-4"><input type="date" name="date" value="${d.date}" onchange="window.handleInput(event)" class="bg-transparent outline-none font-medium"></td>
-                    <td class="p-4 text-center"><input type="time" name="e1" value="${d.entrada1||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded-md p-1"></td>
-                    <td class="p-4 text-center"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded-md p-1"></td>
-                    <td class="p-4 text-center"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded-md p-1"></td>
-                    <td class="p-4 text-center"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded-md p-1"></td>
-                    <td class="p-4 text-center font-bold text-stone-500">${mToT(stats.totalMin)}</td>
-                    <td class="p-4 text-center font-bold text-amber-600">${mToT(stats.extraMin)}</td>
-                    <td class="p-4 text-right font-bold text-amber-700">${formatBRL(stats.ganhoExtra)}</td>
-                    <td class="p-4 text-right font-bold text-green-700">${formatBRL(stats.ganhoTotal)}</td>
-                    <td class="p-4 text-center"><button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-600">✕</button></td>
-                `;
-                tbody.appendChild(tr);
+                tbody.innerHTML += `
+                    <tr class="border-b hover:bg-stone-50 group">
+                        <td class="p-4"><input type="date" name="date" value="${d.date}" onchange="window.handleInput(event)" class="bg-transparent outline-none font-medium"></td>
+                        <td class="p-4 text-center"><input type="time" name="e1" value="${d.entrada1||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded-md p-1"></td>
+                        <td class="p-4 text-center"><input type="time" name="s1" value="${d.saida1||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded-md p-1"></td>
+                        <td class="p-4 text-center"><input type="time" name="e2" value="${d.entrada2||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded-md p-1"></td>
+                        <td class="p-4 text-center"><input type="time" name="s2" value="${d.saida2||''}" oninput="window.handleInput(event)" class="w-20 text-center bg-stone-100 rounded-md p-1"></td>
+                        <td class="p-4 text-center font-bold text-stone-500">${mToT(s.totalMin)}</td>
+                        <td class="p-4 text-center font-bold text-amber-600">${mToT(s.extraMin)}</td>
+                        <td class="p-4 text-right font-bold text-amber-700">${formatBRL(s.ganhoExtra)}</td>
+                        <td class="p-4 text-right font-bold text-green-700">${formatBRL(s.ganhoTotal)}</td>
+                        <td class="p-4 text-center"><button onclick="window.deletarRegistro('${d.id}')" class="opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-600">✕</button></td>
+                    </tr>`;
             });
 
-            document.getElementById('total-horas-normais').textContent = mToT(totalNormalMin);
-            document.getElementById('total-horas-extras').textContent = mToT(totalExtraMin);
-            document.getElementById('ganho-extras-top').textContent = formatBRL(totalGanhoExtras);
-            document.getElementById('salario-final').textContent = formatBRL(totalGanhoGeral);
+            document.getElementById('total-horas-extras').textContent = mToT(tExtraMin);
+            document.getElementById('ganho-extras-top').textContent = formatBRL(tGanhoExtras);
+            document.getElementById('salario-final').textContent = formatBRL(tGanhoGeral);
         }
 
         window.addNewRow = () => {
-            // Cria um novo dia no mês que está sendo visualizado
-            const baseDate = currentMonthKey + "-01";
-            saveEntry(baseDate, '08:00', '', '', '16:00');
+            // Pega o último dia do mês atual das abas ou a data de hoje se for o mês corrente
+            const today = new Date();
+            const [y, m] = currentMonthKey.split('-').map(Number);
+            const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+            saveEntry(dateStr, '08:00', '', '', '16:00');
         };
+
+        window.logout = () => signOut(auth);
     </script>
 </head>
 <body class="bg-stone-100 text-stone-800 min-h-screen font-sans">
     <div id="login-screen" class="flex items-center justify-center min-h-screen">
-        <div class="bg-white p-10 rounded-[2.5rem] shadow-xl text-center max-w-sm w-full border border-stone-200">
-            <h1 class="text-3xl font-black mb-2 tracking-tighter text-stone-900">Ponto BRL</h1>
-            <p class="text-stone-400 text-sm mb-8 font-medium">Controle salarial</p>
-            <button onclick="window.loginGoogle()" class="w-full py-4 bg-stone-900 text-white rounded-2xl hover:bg-stone-800 font-bold shadow-lg transition-colors">Entrar com Google</button>
+        <div class="bg-white p-10 rounded-[2.5rem] shadow-xl text-center max-w-sm w-full">
+            <h1 class="text-3xl font-black mb-8 tracking-tighter">Ponto BRL</h1>
+            <p class="mb-4 text-sm text-stone-400">Carregando acesso...</p>
         </div>
     </div>
 
     <div id="app-screen" class="hidden max-w-7xl mx-auto py-10 px-6">
-        <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-            <h1 id="user-email" class="font-black text-xl tracking-tight text-stone-900">...</h1>
-            <div class="flex items-center gap-4">
-                <div class="flex flex-col">
-                    <label class="text-[10px] font-bold text-stone-400 uppercase mb-1">Visualizando Mês</label>
-                    <input type="month" id="month-selector" onchange="window.changeMonth(event)" class="bg-white border border-stone-200 rounded-xl px-4 py-2 font-bold text-stone-700 outline-none shadow-sm">
-                </div>
-                <button onclick="window.logout()" class="text-xs font-bold bg-stone-200 px-4 py-2 rounded-xl hover:bg-red-100 transition-colors h-10 mt-5">Sair</button>
-            </div>
+        <header class="flex justify-between items-center mb-8">
+            <h1 id="user-email" class="font-black text-xl tracking-tight">...</h1>
+            <button onclick="window.logout()" class="text-xs font-bold bg-stone-200 px-4 py-2 rounded-xl">Sair</button>
         </header>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm text-center">
-                <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Horas Normais</p>
-                <p id="total-horas-normais" class="text-2xl font-black text-stone-700">00:00</p>
-            </div>
+        <!-- Navegação por Abas de Mês -->
+        <div id="month-tabs" class="flex gap-2 mb-6 overflow-x-auto pb-2 no-scrollbar"></div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
             <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm text-center">
                 <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Horas Extras</p>
                 <p id="total-horas-extras" class="text-2xl font-black text-amber-600">00:00</p>
             </div>
             <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm text-center">
-                <p class="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-1">Total Extras (R$)</p>
+                <p class="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-1">Extras (R$)</p>
                 <p id="ganho-extras-top" class="text-2xl font-black text-amber-700">R$ 0,00</p>
             </div>
-            <div class="bg-stone-900 p-6 rounded-3xl shadow-xl border border-stone-800 text-center">
-                <p class="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1">Salário Bruto</p>
+            <div class="bg-stone-900 p-6 rounded-3xl shadow-xl text-center">
+                <p class="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1">Total Mensal</p>
                 <p id="salario-final" class="text-2xl font-black text-white">R$ 0,00</p>
             </div>
         </div>
 
         <div class="bg-white rounded-[2rem] border border-stone-200 overflow-hidden shadow-sm">
-            <div class="p-6 border-b flex flex-wrap justify-between items-center bg-stone-50/50 gap-4">
-                <h2 class="font-black text-stone-800 text-lg">Registros Salvos</h2>
-                <button onclick="window.addNewRow()" class="bg-green-600 text-white px-6 py-2 rounded-2xl text-sm font-bold hover:bg-green-700 shadow-md transition-all active:scale-95">+ Adicionar Registro</button>
+            <div class="p-6 border-b flex justify-between items-center bg-stone-50/50">
+                <h2 class="font-black text-stone-800">Folha de Ponto</h2>
+                <button onclick="window.addNewRow()" class="bg-green-600 text-white px-6 py-2 rounded-2xl text-sm font-bold shadow-md hover:bg-green-700 active:scale-95 transition-all">+ Adicionar Dia</button>
             </div>
             <div class="overflow-x-auto">
-                <table class="w-full text-left text-sm min-w-[900px]">
+                <table class="w-full text-left text-sm min-w-[950px]">
                     <thead class="bg-stone-50 border-b text-stone-400 font-bold text-[10px] uppercase">
                         <tr>
                             <th class="p-4">Data</th>
-                            <th class="p-4 text-center">Ent. 1</th>
-                            <th class="p-4 text-center">Saí. 1</th>
-                            <th class="p-4 text-center">Ent. 2</th>
-                            <th class="p-4 text-center">Saí. 2</th>
-                            <th class="p-4 text-center">Total</th>
-                            <th class="p-4 text-center text-amber-600">Extras</th>
-                            <th class="p-4 text-right text-amber-600">Extra (R$)</th>
-                            <th class="p-4 text-right text-green-600">Ganho Total</th>
+                            <th class="p-4 text-center">Ent. 1</th><th class="p-4 text-center">Saí. 1</th>
+                            <th class="p-4 text-center">Ent. 2</th><th class="p-4 text-center">Saí. 2</th>
+                            <th class="p-4 text-center">Total</th><th class="p-4 text-center">Extras</th>
+                            <th class="p-4 text-right">Extra (R$)</th><th class="p-4 text-right">Total (R$)</th>
                             <th class="p-4"></th>
                         </tr>
                     </thead>

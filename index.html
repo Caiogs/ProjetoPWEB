@@ -8,7 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@200;400;600;800&display=swap" rel="stylesheet">
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, signOut, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = JSON.parse('{"apiKey":"AIzaSyCai6niQ2r0_DuVESfu0fzbTNe6l7NePXk","authDomain":"meu-ponto-app-bada8.firebaseapp.com","projectId":"meu-ponto-app-bada8","storageBucket":"meu-ponto-app-bada8.firebasestorage.app","messagingSenderId":"498041645872","appId":"1:498041645872:web:0248fd4c13dcbc8162f6f5"}');
@@ -24,18 +24,29 @@
             entries: [],
             currentMonth: new Date().toISOString().substring(0, 7),
             loading: true,
-            inIframe: window.self !== window.top
+            inIframe: window.self !== window.top,
+            error: null
         };
 
+        // Formatação
         const fCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
-        const tToM = (t) => { if (!t || !t.includes(':')) return 0; const [h, m] = t.split(':').map(Number); return (h * 60) + m; };
-        const mToT = (m) => { const absM = Math.floor(Math.abs(m)); const h = Math.floor(absM / 60); const min = absM % 60; return `${m < 0 ? '-' : ''}${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`; };
+        const tToM = (t) => { 
+            if (!t || !t.includes(':')) return 0; 
+            const [h, m] = t.split(':').map(Number); 
+            return (h * 60) + (m || 0); 
+        };
+        const mToT = (m) => { 
+            const absM = Math.floor(Math.abs(m)); 
+            const h = Math.floor(absM / 60); 
+            const min = absM % 60; 
+            return `${m < 0 ? '-' : ''}${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`; 
+        };
 
         const CONFIG = { VALOR_HORA: 11.27, JORNADA_DIARIA: 420, PERCENTUAL_EXTRA: 1.50 };
 
         const calcEntry = (d) => {
             const diff = (s, e) => {
-                if (!s || !e) return 0;
+                if (!s || !e || s.length < 5 || e.length < 5) return 0;
                 const start = tToM(s), end = tToM(e);
                 return end < start ? (1440 - start) + end : end - start;
             };
@@ -47,18 +58,29 @@
             return { total, extra, valorTotal: valorNormal + valorExtra, valorExtra };
         };
 
+        window.handleTimeInput = (e) => {
+            let v = e.target.value.replace(/\D/g, '');
+            if (v.length >= 2) v = v.substring(0, 2) + ':' + v.substring(2, 4);
+            e.target.value = v.substring(0, 5);
+        };
+
+        // Correção de Login
         window.loginWithGoogle = async () => {
-            if (state.inIframe) {
-                alert("O Login com Google é bloqueado dentro de quadros (iframes). Use o 'Entrar como Convidado' para testar aqui ou abra o site em uma nova aba.");
-                return;
+            state.error = null;
+            render();
+            try {
+                // Usamos Redirect em vez de Popup para evitar fechamento imediato/bloqueio
+                await signInWithRedirect(auth, provider);
+            } catch (e) {
+                state.error = "Erro ao iniciar login. Tente 'Convidado' se estiver em modo preview.";
+                render();
             }
-            try { await signInWithPopup(auth, provider); } catch (e) { console.error(e); }
         };
 
         window.loginAnonymously = async () => {
             state.loading = true;
             render();
-            try { await signInAnonymously(auth); } catch (e) { console.error(e); state.loading = false; render(); }
+            try { await signInAnonymously(auth); } catch (e) { state.error = e.message; state.loading = false; render(); }
         };
 
         window.logout = () => signOut(auth);
@@ -70,10 +92,17 @@
                 snap.forEach(doc => state.entries.push({ id: doc.id, ...doc.data() }));
                 state.loading = false;
                 render();
-            }, (err) => { console.error(err); state.loading = false; render(); });
+            }, (err) => { state.loading = false; render(); });
         };
 
         const startApp = async () => {
+            // Processar resultado de redirect (se houver)
+            try {
+                await getRedirectResult(auth);
+            } catch (e) {
+                console.error("Erro no redirect:", e);
+            }
+
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                 await signInWithCustomToken(auth, __initial_auth_token);
             }
@@ -97,6 +126,7 @@
         };
 
         window.updateField = (id, field, value) => {
+            if (value !== "" && value.length !== 5 && field !== 'date') return;
             const entry = state.entries.find(e => e.id === id);
             if (entry) {
                 entry[field] = value;
@@ -125,15 +155,18 @@
                             <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                         </div>
                         <h1 class="text-3xl font-extrabold text-slate-900 mb-2">PONTO.BRL Cloud</h1>
-                        <p class="text-slate-500 mb-8 max-w-xs">Gerencie suas horas com sincronização automática.</p>
+                        <p class="text-slate-500 mb-8 max-w-xs">Gerencie suas horas na nuvem com segurança.</p>
                         
+                        ${state.error ? `<div class="mb-4 p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl border border-red-100">${state.error}</div>` : ''}
+
                         <div class="flex flex-col gap-3 w-full max-w-xs">
-                            <button onclick="loginAnonymously()" class="bg-indigo-600 text-white px-6 py-4 rounded-2xl font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 active:scale-95 transition-all">
-                                Entrar como Convidado (Recomendado)
-                            </button>
-                            <button onclick="loginWithGoogle()" class="flex items-center justify-center gap-3 bg-white border border-slate-200 px-6 py-3 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all ${state.inIframe ? 'opacity-50 cursor-not-allowed' : ''}">
+                            <button onclick="loginWithGoogle()" class="flex items-center justify-center gap-3 bg-white border border-slate-200 px-6 py-4 rounded-2xl font-bold text-slate-700 hover:bg-slate-50 transition-all shadow-sm active:scale-95">
                                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
-                                Google Login ${state.inIframe ? '(Bloqueado no Frame)' : ''}
+                                Acessar com Google
+                            </button>
+                            <div class="flex items-center gap-2 my-2 text-slate-300"><hr class="flex-1 border-slate-100"><span>ou</span><hr class="flex-1 border-slate-100"></div>
+                            <button onclick="loginAnonymously()" class="bg-slate-800 text-white px-6 py-4 rounded-2xl font-bold hover:bg-slate-900 transition-all active:scale-95">
+                                Entrar como Convidado
                             </button>
                         </div>
                     </div>
@@ -156,8 +189,8 @@
                 <div class="space-y-6">
                     <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-[2rem] shadow-sm">
                         <div class="flex items-center gap-3">
-                            <div class="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center font-bold text-slate-600">
-                                ${state.user.photoURL ? `<img src="${state.user.photoURL}" class="rounded-full">` : 'U'}
+                            <div class="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center font-bold text-indigo-600 overflow-hidden">
+                                ${state.user.photoURL ? `<img src="${state.user.photoURL}">` : (state.user.displayName ? state.user.displayName[0] : 'U')}
                             </div>
                             <div>
                                 <h2 class="text-lg font-bold text-slate-900 leading-tight">${state.user.isAnonymous ? 'Modo Convidado' : (state.user.displayName || 'Usuário')}</h2>
@@ -169,7 +202,7 @@
                                 ${months.map(m => `<option value="${m}" ${state.currentMonth === m ? 'selected' : ''}>${m}</option>`).join('')}
                             </select>
                             <button onclick="addEntry()" class="bg-indigo-600 text-white px-5 py-2 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 transition-all">
-                                + Novo Registro
+                                + Novo Dia
                             </button>
                         </div>
                     </header>
@@ -180,7 +213,7 @@
                             <div class="text-2xl font-black text-slate-800">${mToT(stats.hoursMin)}</div>
                         </div>
                         <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-50">
-                            <p class="text-[10px] font-black text-amber-500 uppercase mb-1">Extras (1.5x)</p>
+                            <p class="text-[10px] font-black text-amber-500 uppercase mb-1">Extras</p>
                             <div class="text-2xl font-black text-amber-600">${mToT(stats.extraMin)}</div>
                         </div>
                         <div class="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100">
@@ -188,7 +221,7 @@
                             <div class="text-2xl font-black text-indigo-700">${fCurrency(stats.extraVal)}</div>
                         </div>
                         <div class="bg-slate-900 p-6 rounded-[2rem] shadow-xl">
-                            <p class="text-[10px] font-black text-slate-500 uppercase mb-1">Ganhos Totais</p>
+                            <p class="text-[10px] font-black text-slate-500 uppercase mb-1">Ganhos Brutos</p>
                             <div class="text-2xl font-black text-white">${fCurrency(stats.totalVal)}</div>
                         </div>
                     </div>
@@ -199,10 +232,10 @@
                                 <thead>
                                     <tr class="bg-slate-50/50 text-[10px] font-black text-slate-400 uppercase">
                                         <th class="py-4 px-6">Data</th>
-                                        <th class="py-4 px-2 text-center">Ent. 1</th>
-                                        <th class="py-4 px-2 text-center">Saí. 1</th>
-                                        <th class="py-4 px-2 text-center">Ent. 2</th>
-                                        <th class="py-4 px-2 text-center">Saí. 2</th>
+                                        <th class="py-4 px-2 text-center">E1</th>
+                                        <th class="py-4 px-2 text-center">S1</th>
+                                        <th class="py-4 px-2 text-center">E2</th>
+                                        <th class="py-4 px-2 text-center">S2</th>
                                         <th class="py-4 px-2 text-center">Extra</th>
                                         <th class="py-4 px-6 text-right">Ganho</th>
                                         <th class="py-4 px-6"></th>
@@ -214,14 +247,34 @@
                                         return `
                                             <tr class="group hover:bg-slate-50/30 transition-colors">
                                                 <td class="py-3 px-6"><input type="date" value="${e.date}" onchange="updateField('${e.id}', 'date', this.value)" class="bg-transparent font-bold outline-none"></td>
-                                                <td class="py-3 px-2 text-center"><input type="text" value="${e.e1}" onblur="updateField('${e.id}', 'e1', this.value)" class="w-12 text-center bg-slate-100 rounded p-1 font-mono text-xs"></td>
-                                                <td class="py-3 px-2 text-center"><input type="text" value="${e.s1}" onblur="updateField('${e.id}', 's1', this.value)" class="w-12 text-center bg-slate-100 rounded p-1 font-mono text-xs"></td>
-                                                <td class="py-3 px-2 text-center"><input type="text" value="${e.e2}" onblur="updateField('${e.id}', 'e2', this.value)" class="w-12 text-center bg-slate-100 rounded p-1 font-mono text-xs"></td>
-                                                <td class="py-3 px-2 text-center"><input type="text" value="${e.s2}" onblur="updateField('${e.id}', 's2', this.value)" class="w-12 text-center bg-slate-100 rounded p-1 font-mono text-xs"></td>
+                                                <td class="py-3 px-2 text-center">
+                                                    <input type="text" placeholder="00:00" value="${e.e1}" 
+                                                        oninput="handleTimeInput(event)" 
+                                                        onblur="updateField('${e.id}', 'e1', this.value)" 
+                                                        class="w-14 text-center bg-slate-100 rounded-lg p-1.5 font-mono text-xs border border-transparent focus:border-indigo-300 outline-none">
+                                                </td>
+                                                <td class="py-3 px-2 text-center">
+                                                    <input type="text" placeholder="00:00" value="${e.s1}" 
+                                                        oninput="handleTimeInput(event)" 
+                                                        onblur="updateField('${e.id}', 's1', this.value)" 
+                                                        class="w-14 text-center bg-slate-100 rounded-lg p-1.5 font-mono text-xs border border-transparent focus:border-indigo-300 outline-none">
+                                                </td>
+                                                <td class="py-3 px-2 text-center">
+                                                    <input type="text" placeholder="00:00" value="${e.e2}" 
+                                                        oninput="handleTimeInput(event)" 
+                                                        onblur="updateField('${e.id}', 'e2', this.value)" 
+                                                        class="w-14 text-center bg-slate-100 rounded-lg p-1.5 font-mono text-xs border border-transparent focus:border-indigo-300 outline-none">
+                                                </td>
+                                                <td class="py-3 px-2 text-center">
+                                                    <input type="text" placeholder="00:00" value="${e.s2}" 
+                                                        oninput="handleTimeInput(event)" 
+                                                        onblur="updateField('${e.id}', 's2', this.value)" 
+                                                        class="w-14 text-center bg-slate-100 rounded-lg p-1.5 font-mono text-xs border border-transparent focus:border-indigo-300 outline-none">
+                                                </td>
                                                 <td class="py-3 px-2 text-center"><span class="font-bold ${c.extra > 0 ? 'text-amber-500' : 'text-slate-300'}">${mToT(c.extra)}</span></td>
                                                 <td class="py-3 px-6 text-right font-black text-slate-700">${fCurrency(c.valorTotal)}</td>
                                                 <td class="py-3 px-6 text-center">
-                                                    <button onclick="removeEntry('${e.id}')" class="text-slate-300 hover:text-red-500 transition-colors">
+                                                    <button onclick="removeEntry('${e.id}')" class="text-slate-200 hover:text-red-500 transition-colors">
                                                         <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"></path></svg>
                                                     </button>
                                                 </td>
@@ -238,8 +291,10 @@
         window.onload = startApp;
     </script>
     <style>
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #fbfcfd; color: #1e293b; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
         input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.3; cursor: pointer; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
     </style>
 </head>
 <body class="p-4 md:p-8">
